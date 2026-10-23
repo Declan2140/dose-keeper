@@ -33,6 +33,32 @@ jobs:
           path: app/build/outputs/apk/debug/*.apk
           retention-days: 30
 
+      # Release build: shrunk with R8, and signed with the upload key when the secrets are set.
+      - name: Decode upload key
+        env:
+          DK_KEYSTORE_BASE64: ${{ secrets.DK_KEYSTORE_BASE64 }}
+        if: env.DK_KEYSTORE_BASE64 != ''
+        run: |
+          echo "$DK_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/upload.jks"
+          echo "DK_KEYSTORE_PATH=$RUNNER_TEMP/upload.jks" >> "$GITHUB_ENV"
+
+      - name: Build release
+        env:
+          DK_KEYSTORE_PASSWORD: ${{ secrets.DK_KEYSTORE_PASSWORD }}
+          DK_KEY_ALIAS: ${{ secrets.DK_KEY_ALIAS }}
+          DK_KEY_PASSWORD: ${{ secrets.DK_KEY_PASSWORD }}
+        run: ./gradlew :app:bundleRelease :app:assembleRelease --stacktrace
+
+      - name: Upload release bundle
+        if: env.DK_KEYSTORE_PATH != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: dose-keeper-release
+          path: |
+            app/build/outputs/bundle/release/*.aab
+            app/build/outputs/apk/release/*.apk
+          retention-days: 90
+
       - name: Upload test reports
         if: failure()
         uses: actions/upload-artifact@v4
