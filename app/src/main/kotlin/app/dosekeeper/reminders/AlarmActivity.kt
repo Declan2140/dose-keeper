@@ -86,7 +86,6 @@ class AlarmActivity : ComponentActivity() {
                     loaded?.let { (med, profile) ->
                         DoseAlarm(
                             med, profile,
-                            snoozeMinutes = app.settings.snoozeMinutes,
                             onAnswer = { act(id) { app.engine.answer(id, it) } },
                             onSnooze = { act(id) { app.engine.snooze(id) } },
                         )
@@ -127,7 +126,6 @@ class AlarmActivity : ComponentActivity() {
 private fun DoseAlarm(
     med: Medicine,
     profile: Profile?,
-    snoozeMinutes: Int,
     onAnswer: (DoseStatus) -> Unit,
     onSnooze: () -> Unit,
 ) {
@@ -156,7 +154,7 @@ private fun DoseAlarm(
                 modifier = Modifier.weight(1f).height(60.dp),
                 border = BorderStroke(1.dp, Color(0xFF3A3F46)),
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
-            ) { Text("Snooze $snoozeMinutes min", fontSize = 18.sp, textAlign = TextAlign.Center) }
+            ) { Text("Snooze", fontSize = 18.sp, textAlign = TextAlign.Center) }
             OutlinedButton(
                 onClick = { onAnswer(DoseStatus.SKIPPED) },
                 modifier = Modifier.weight(1f).height(60.dp),

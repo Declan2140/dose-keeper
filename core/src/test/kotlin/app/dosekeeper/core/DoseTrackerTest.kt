@@ -60,6 +60,24 @@ class DoseTrackerTest {
         assertEquals("2026-03-03T20:00", local(after.nextDue))
     }
 
+    @Test fun `unchecking a fixed dose brings it back and survives a recompute`() {
+        val s = DoseTracker.start(twiceDaily, at("2026-03-02T07:00"), zone)
+        val (_, record) = DoseTracker.answer(twiceDaily, s, DoseStatus.TAKEN, at("2026-03-02T08:05"), zone)
+        val back = DoseTracker.undo(twiceDaily, record.due!!, at("2026-03-02T08:10"), 10)
+        assertEquals("2026-03-02T08:00", local(back.nextDue))
+        assertEquals("2026-03-02T08:20", local(back.snoozedUntil))
+        assertEquals("2026-03-02T08:00", local(DoseTracker.recompute(twiceDaily, back, zone).nextDue))
+    }
+
+    @Test fun `unchecking an interval dose before it is due sets no snooze`() {
+        val s = DoseTracker.start(sixHourly, at("2026-03-02T11:00"), zone)
+        val (_, record) = DoseTracker.answer(sixHourly, s, DoseStatus.TAKEN, at("2026-03-02T11:30"), zone)
+        val back = DoseTracker.undo(sixHourly, record.due!!, at("2026-03-02T11:35"), 10)
+        assertEquals("2026-03-02T12:00", local(back.nextDue))
+        assertNull(back.snoozedUntil)
+        assertEquals("2026-03-02T12:00", local(DoseTracker.recompute(sixHourly, back, zone).nextDue))
+    }
+
     @Test fun `alarm keeps coming back until answered`() {
         val s = DoseTracker.start(twiceDaily, at("2026-03-02T07:00"), zone)
         val fired = DoseTracker.alarmFired(s, at("2026-03-02T08:00"), 10)

@@ -4,6 +4,9 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.animation.AnimatedContentTransitionScope
+import androidx.compose.animation.AnimatedContentTransitionScope.SlideDirection
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -30,7 +33,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.navigation.NavBackStackEntry
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -73,6 +78,19 @@ private enum class Tab(val route: String, val label: String, val icon: ImageVect
     HISTORY("history", "History", Icons.Filled.History),
     SETTINGS("settings", "Settings", Icons.Filled.Settings),
 }
+
+/** Tabs in bar order, with every screen opened from a tab counted as further right. */
+private fun depth(entry: NavBackStackEntry): Int =
+    Tab.entries.indexOfFirst { it.route == entry.destination.route }.takeIf { it >= 0 } ?: Tab.entries.size
+
+/** Slides toward a tab or screen to the right, and back the other way. Going back always slides right. */
+private fun AnimatedContentTransitionScope<NavBackStackEntry>.slideDirection(back: Boolean = false): SlideDirection {
+    val target = depth(targetState)
+    val initial = depth(initialState)
+    return if (target > initial || (target == initial && !back)) SlideDirection.Left else SlideDirection.Right
+}
+
+private val slide = tween<IntOffset>(300)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -128,7 +146,15 @@ private fun AppNav(startOnAdd: Boolean) {
             }
         },
     ) { padding ->
-        NavHost(nav, startDestination = "today", modifier = Modifier.padding(padding)) {
+        NavHost(
+            nav,
+            startDestination = "today",
+            modifier = Modifier.padding(padding),
+            enterTransition = { slideIntoContainer(slideDirection(), slide) },
+            exitTransition = { slideOutOfContainer(slideDirection(), slide) },
+            popEnterTransition = { slideIntoContainer(slideDirection(back = true), slide) },
+            popExitTransition = { slideOutOfContainer(slideDirection(back = true), slide) },
+        ) {
             composable("today") {
                 TodayScreen(onAddMedicine = { nav.navigate("edit/0") }, onOpenReliability = { nav.navigate("reliability") })
             }

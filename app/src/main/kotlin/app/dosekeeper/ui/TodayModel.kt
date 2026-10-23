@@ -23,6 +23,8 @@ data class TodayDose(
     val snoozedUntil: Instant?,
     /** When it was taken or skipped. */
     val at: Instant? = null,
+    /** A taken or skipped dose that can still be unchecked: the medicine's latest answer. */
+    val undoable: Boolean = false,
 )
 
 data class AsNeededRow(val medicine: Medicine, val profile: Profile?, val lastTaken: Instant?, val notBefore: Instant?)
@@ -71,11 +73,13 @@ fun buildToday(
 
         // Everything already answered or missed today, active or not.
         val shown = mutableSetOf<Long>()
+        val latestDue = medLogs.mapNotNull { it.dueAt }.maxOrNull()
         for (log in medLogs) {
             val due = log.dueAt ?: continue
             if (due < dayStart.toEpochMilli() || due >= dayEnd.toEpochMilli()) continue
             shown += due
-            doses += TodayDose(med, profile, Instant.ofEpochMilli(due), log.doseStatus, actionable = false, overdue = false, snoozedUntil = null, at = Instant.ofEpochMilli(log.actionAt))
+            val undoable = med.isActive && due == latestDue && log.doseStatus != DoseStatus.MISSED
+            doses += TodayDose(med, profile, Instant.ofEpochMilli(due), log.doseStatus, actionable = false, overdue = false, snoozedUntil = null, at = Instant.ofEpochMilli(log.actionAt), undoable = undoable)
         }
         if (!med.isActive) continue
 

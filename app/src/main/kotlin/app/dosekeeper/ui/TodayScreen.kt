@@ -70,6 +70,7 @@ fun TodayScreen(onAddMedicine: () -> Unit, onOpenReliability: () -> Unit) {
     val logs by app.db.doseLogs().observeSince(since).collectAsState(initial = emptyList())
     var profileFilter by remember { mutableStateOf<Long?>(null) }
     var choosing by remember { mutableStateOf<TodayDose?>(null) }
+    var unchecking by remember { mutableStateOf<TodayDose?>(null) }
 
     // Re-evaluate late doses every 30 seconds, and catch up on anything missed while closed.
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
@@ -89,6 +90,7 @@ fun TodayScreen(onAddMedicine: () -> Unit, onOpenReliability: () -> Unit) {
 
     fun answer(dose: TodayDose, status: DoseStatus) = scope.launch { app.engine.answer(dose.medicine.id, status) }
     fun snooze(dose: TodayDose) = scope.launch { app.engine.snooze(dose.medicine.id) }
+    fun undo(dose: TodayDose) = scope.launch { app.engine.undo(dose.medicine.id, dose.due.toEpochMilli()) }
 
     Scaffold(
         floatingActionButton = {
@@ -162,7 +164,7 @@ fun TodayScreen(onAddMedicine: () -> Unit, onOpenReliability: () -> Unit) {
                 DoseRow(dose, onCircle = { answer(dose, DoseStatus.TAKEN) }, onClick = { choosing = dose })
             }
             timeGroups(rest.filter { it.status != null }.sortedBy { it.due }, "done") { dose ->
-                DoseRow(dose, onCircle = {}, onClick = {})
+                DoseRow(dose, onCircle = { undo(dose) }, onClick = { unchecking = dose })
             }
 
             if (model.asNeeded.isNotEmpty()) {
@@ -184,11 +186,30 @@ fun TodayScreen(onAddMedicine: () -> Unit, onOpenReliability: () -> Unit) {
             confirmButton = {
                 Column(horizontalAlignment = Alignment.End) {
                     TextButton(onClick = { answer(dose, DoseStatus.TAKEN); choosing = null }) { Text("Taken") }
-                    TextButton(onClick = { snooze(dose); choosing = null }) { Text("Snooze ${app.settings.snoozeMinutes} min") }
+                    TextButton(onClick = { snooze(dose); choosing = null }) { Text("Snooze") }
                     TextButton(onClick = { answer(dose, DoseStatus.SKIPPED); choosing = null }) { Text("Skip") }
                     TextButton(onClick = { choosing = null }) { Text("Cancel") }
                 }
             },
+        )
+    }
+
+    unchecking?.let { dose ->
+        AlertDialog(
+            onDismissRequest = { unchecking = null },
+            title = { Text(dose.medicine.displayName) },
+            text = {
+                Text(
+                    listOfNotNull(dose.profile?.name, "due ${dose.due.localTime()}").joinToString(", ") +
+                        if (dose.status == DoseStatus.TAKEN) ". Taken at ${dose.at?.localTime() ?: ""}." else ". Skipped.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { undo(dose); unchecking = null }) {
+                    Text(if (dose.status == DoseStatus.TAKEN) "Mark as not taken" else "Undo skip")
+                }
+            },
+            dismissButton = { TextButton(onClick = { unchecking = null }) { Text("Cancel") } },
         )
     }
 }
@@ -276,7 +297,7 @@ private fun DoseRow(dose: TodayDose, onCircle: () -> Unit, onClick: () -> Unit) 
     val done = dose.status != null
     Column(Modifier.padding(horizontal = 24.dp)) {
         Row(
-            Modifier.fillMaxWidth().clickable(enabled = dose.actionable, onClick = onClick).padding(vertical = 12.dp),
+            Modifier.fillMaxWidth().clickable(enabled = dose.actionable || dose.undoable, onClick = onClick).padding(vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             ProfileBadge(dose.profile, dimmed = done)
@@ -298,7 +319,11 @@ private fun DoseRow(dose: TodayDose, onCircle: () -> Unit, onClick: () -> Unit) 
                 Text(sub, style = MaterialTheme.typography.bodySmall, color = if (dose.status == DoseStatus.MISSED) Overdue else scheme.onSurfaceVariant)
             }
             when {
-                dose.status == DoseStatus.TAKEN -> Box(Modifier.size(44.dp).background(scheme.secondary, CircleShape), contentAlignment = Alignment.Center) {
+                dose.status == DoseStatus.TAKEN -> Box(
+                    Modifier.size(44.dp).background(scheme.secondary, CircleShape)
+                        .clickable(enabled = dose.undoable, onClickLabel = "Mark as not taken", onClick = onCircle),
+                    contentAlignment = Alignment.Center,
+                ) {
                     Icon(Icons.Filled.Check, "Taken", tint = scheme.onSecondary, modifier = Modifier.size(22.dp))
                 }
                 dose.actionable -> IconButton(

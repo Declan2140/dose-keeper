@@ -76,6 +76,10 @@ interface DoseLogDao {
     @Query("SELECT * FROM dose_logs WHERE medicineId = :medicineId AND status = 'TAKEN' ORDER BY actionAt DESC LIMIT 1")
     suspend fun lastTaken(medicineId: Long): DoseLog?
 
+    /** The latest scheduled dose on record for a medicine, answered or missed. */
+    @Query("SELECT * FROM dose_logs WHERE medicineId = :medicineId AND dueAt IS NOT NULL ORDER BY dueAt DESC LIMIT 1")
+    suspend fun lastScheduled(medicineId: Long): DoseLog?
+
     @Query("SELECT COUNT(*) FROM dose_logs WHERE COALESCE(dueAt, actionAt) < :before")
     fun observeCountBefore(before: Long): Flow<Int>
 

@@ -86,6 +86,21 @@ object DoseTracker {
         return next to DoseRecord(due, status, now)
     }
 
+    /**
+     * The user unchecked the last dose they answered, due at [due]. It becomes the current dose
+     * again, with an anchor that works back out to it after a recompute. If it is already past
+     * due, the alarm waits [snoozeMinutes] instead of ringing the moment it is unchecked.
+     */
+    fun undo(schedule: Schedule, due: Instant, now: Instant, snoozeMinutes: Int): TrackerState {
+        val anchor = when (schedule) {
+            is Schedule.FixedTimes -> due.minusMillis(1)
+            is Schedule.Interval -> due.minus(schedule.every)
+            is Schedule.AsNeeded -> null
+        }
+        val snooze = if (due.isAfter(now)) null else DoseCalculator.snoozeUntil(now, snoozeMinutes)
+        return TrackerState(anchor, due, snooze)
+    }
+
     /** The user logged an "as needed" dose. */
     fun logAsNeeded(now: Instant): DoseRecord = DoseRecord(null, DoseStatus.TAKEN, now)
 

@@ -62,6 +62,25 @@ class ReminderEngine(
         syncAlarm(med.withTracker(next))
     }
 
+    /**
+     * Unchecks a taken or skipped dose, making it the current dose again. Only the medicine's
+     * latest dose can be unchecked, so the doses after it are still worked out in order.
+     */
+    suspend fun undo(medicineId: Long, dueAt: Long) = lock.withLock {
+        val med = db.medicines().get(medicineId) ?: return@withLock
+        if (!med.isActive) return@withLock
+        val log = db.doseLogs().lastScheduled(medicineId) ?: return@withLock
+        if (log.dueAt != dueAt || log.doseStatus == DoseStatus.MISSED) return@withLock
+        val schedule = runCatching { med.parsedSchedule }.getOrNull() ?: return@withLock
+        val updated = med.withTracker(DoseTracker.undo(schedule, Instant.ofEpochMilli(dueAt), Instant.now(), settings.snoozeMinutes))
+        db.withTransaction {
+            db.doseLogs().delete(log)
+            db.medicines().update(updated)
+        }
+        notifier.cancelDose(medicineId)
+        syncAlarm(updated)
+    }
+
     suspend fun snooze(medicineId: Long, minutes: Int = settings.snoozeMinutes) = lock.withLock {
         val med = db.medicines().get(medicineId) ?: return@withLock
         if (med.nextDueAt == null) return@withLock
