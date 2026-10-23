@@ -89,7 +89,6 @@ dependencies {
     implementation("androidx.documentfile:documentfile:1.0.1")
     implementation("com.android.billingclient:billing-ktx:7.1.1")
 
-    testImplementation(kotlin("test"))
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation(composeBom)
     androidTestImplementation("androidx.test.ext:junit:1.2.1")

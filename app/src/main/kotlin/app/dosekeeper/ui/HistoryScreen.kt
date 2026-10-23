@@ -60,7 +60,7 @@ fun HistoryScreen() {
         val med = medById[log.medicineId]
         (profileFilter == null || med?.profileId == profileFilter) && (medicineFilter == null || log.medicineId == medicineFilter)
     }
-    val byDay = filtered.groupBy { Instant.ofEpochMilli(it.dueAt ?: it.actionAt).localDate() }.toSortedMap(compareByDescending { it })
+    val byDay = filtered.groupBy { Instant.ofEpochMilli(it.dueAt ?: it.actionAt).localDate() }.toSortedMap(Comparator.reverseOrder())
 
     LazyColumn(
         Modifier.fillMaxSize(),
