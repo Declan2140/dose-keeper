@@ -21,7 +21,6 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 
 /** First launch: no sign-up. A one-screen welcome, the permissions with one line each, then a medicine. */
@@ -35,7 +34,7 @@ fun Onboarding(onFinished: () -> Unit) {
         ) {
             if (step == 0) {
                 Spacer(Modifier.height(24.dp))
-                Text("Dose Keeper", style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                Text("Dose Keeper", style = MaterialTheme.typography.displaySmall)
                 Text("Medicine reminders that ring every time.", style = MaterialTheme.typography.titleLarge)
                 Text("No account. No internet needed. Your data stays on this phone.")
                 Text("Track medicines for yourself, your family and your pets, on set times, every few hours, or as needed.")
@@ -46,7 +45,7 @@ fun Onboarding(onFinished: () -> Unit) {
                 Spacer(Modifier.height(12.dp))
                 Button(onClick = { step = 1 }, Modifier.fillMaxWidth().height(56.dp)) { Text("Get started") }
             } else {
-                Text("Let reminders ring", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                Text("Let reminders ring", style = MaterialTheme.typography.headlineSmall)
                 Text("Android blocks alarms until you allow them. Tap each red item.")
                 val checks = rememberChecks()
                 checks.forEach { CheckRow(it) }

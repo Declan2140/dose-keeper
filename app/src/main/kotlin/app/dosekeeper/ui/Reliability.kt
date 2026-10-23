@@ -126,7 +126,7 @@ fun CheckRow(check: Check) {
             Icon(
                 if (check.ok) Icons.Filled.CheckCircle else Icons.Filled.Error,
                 contentDescription = if (check.ok) "OK" else "Needs fixing",
-                tint = if (check.ok) MaterialTheme.colorScheme.primary else Overdue,
+                tint = if (check.ok) MaterialTheme.colorScheme.secondary else Overdue,
             )
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {

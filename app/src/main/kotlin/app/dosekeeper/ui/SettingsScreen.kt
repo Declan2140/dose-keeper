@@ -22,7 +22,6 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -37,7 +36,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
@@ -95,8 +93,8 @@ fun SettingsScreen(onOpenProfiles: () -> Unit, onOpenReliability: () -> Unit) {
         unlockMessage?.let { toast(it); app.unlock.clearMessage() }
     }
 
-    Column(Modifier.verticalScroll(rememberScrollState()).padding(16.dp)) {
-        Text("Settings", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+    Column(Modifier.verticalScroll(rememberScrollState()).padding(start = 24.dp, end = 24.dp, top = 32.dp, bottom = 24.dp)) {
+        Text("Settings", style = MaterialTheme.typography.headlineLarge)
 
         SectionTitle("Reminders")
         val failing = checks.count { !it.ok }
@@ -219,7 +217,7 @@ private fun PasswordDialog(title: String, body: String, confirm: String, onDismi
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(body)
                 if (showField) {
-                    OutlinedTextField(
+                    Field(
                         pw, { pw = it }, label = { Text("Password") }, singleLine = true,
                         visualTransformation = PasswordVisualTransformation(),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),

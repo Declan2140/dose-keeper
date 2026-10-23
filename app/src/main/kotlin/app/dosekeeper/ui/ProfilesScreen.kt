@@ -1,29 +1,21 @@
 package app.dosekeeper.ui
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -35,7 +27,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
@@ -111,42 +102,28 @@ fun ProfilesScreen(startAdding: Boolean = false) {
     if (showUnlock) UnlockDialog("The free version covers one person. Add family members and pets with the unlock.", onDismiss = { showUnlock = false })
 }
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ProfileDialog(initial: Profile?, onDismiss: () -> Unit, onSave: (Profile) -> Unit, onDelete: (() -> Unit)? = null) {
     var name by remember { mutableStateOf(initial?.name ?: "") }
-    var color by remember { mutableStateOf(initial?.colorArgb ?: DoseKeeperApp.PROFILE_COLORS[1]) }
-    var icon by remember { mutableStateOf(initial?.icon ?: "person") }
+    var pet by remember { mutableStateOf(initial?.icon == ICON_PET) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(if (initial == null) "Add a person or pet" else "Edit ${initial.name}") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedTextField(name, { name = it }, label = { Text("Name") }, singleLine = true, keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words))
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    DoseKeeperApp.PROFILE_COLORS.forEach { c ->
-                        Box(
-                            Modifier.size(40.dp).background(Color(c), CircleShape)
-                                .then(if (c == color) Modifier.border(3.dp, MaterialTheme.colorScheme.onSurface, CircleShape) else Modifier)
-                                .clickable { color = c },
-                        )
-                    }
-                }
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    PROFILE_ICONS.forEach { (key, vector) ->
-                        Box(
-                            Modifier.size(44.dp).background(if (key == icon) Color(color) else MaterialTheme.colorScheme.surfaceVariant, CircleShape).clickable { icon = key },
-                            contentAlignment = Alignment.Center,
-                        ) { Icon(vector, key, tint = if (key == icon) Color.White else MaterialTheme.colorScheme.onSurfaceVariant) }
-                    }
+                Field(name, { name = it }, label = { Text("Name") }, singleLine = true, keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("This is a pet", Modifier.weight(1f))
+                    Switch(pet, { pet = it })
                 }
                 if (onDelete != null) TextButton(onClick = onDelete) { Text("Delete profile", color = MaterialTheme.colorScheme.error) }
             }
         },
         confirmButton = {
             TextButton(enabled = name.isNotBlank(), onClick = {
-                val base = initial ?: Profile(name = name.trim(), colorArgb = color, icon = icon)
-                onSave(base.copy(name = name.trim(), colorArgb = color, icon = icon))
+                val icon = if (pet) ICON_PET else ICON_PERSON
+                val base = initial ?: Profile(name = name.trim(), colorArgb = DoseKeeperApp.PROFILE_COLORS.first(), icon = icon)
+                onSave(base.copy(name = name.trim(), icon = icon))
             }) { Text("Save") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },

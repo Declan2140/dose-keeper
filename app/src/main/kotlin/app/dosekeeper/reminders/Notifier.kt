@@ -77,7 +77,7 @@ class Notifier(private val context: Context) {
             .setCategory(NotificationCompat.CATEGORY_ALARM)
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-            .setColor(profile?.colorArgb ?: ContextCompat.getColor(context, R.color.brand))
+            .setColor(ContextCompat.getColor(context, R.color.brand))
             .setOngoing(true)
             .setAutoCancel(false)
             .setContentIntent(fullScreen)

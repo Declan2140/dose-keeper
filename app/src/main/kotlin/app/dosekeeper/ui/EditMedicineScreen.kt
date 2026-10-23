@@ -30,7 +30,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.InputChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -187,33 +186,29 @@ fun EditMedicineScreen(medicineId: Long, onDone: () -> Unit, onAddProfile: () ->
         Column(
             Modifier.padding(padding).imePadding().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 32.dp),
         ) {
-            OutlinedTextField(
+            Field(
                 form.name, { form.name = it }, label = { Text("Medicine name") }, modifier = Modifier.fillMaxWidth(),
                 keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words), enabled = !archived,
             )
             Spacer(Modifier.height(8.dp))
-            OutlinedTextField(form.strength, { form.strength = it }, label = { Text("Strength or dose (optional)") }, placeholder = { Text("e.g. 250 mg, 2 tablets, 5 ml") }, modifier = Modifier.fillMaxWidth(), enabled = !archived)
+            Field(form.strength, { form.strength = it }, label = { Text("Strength or dose (optional)") }, placeholder = { Text("e.g. 250 mg, 2 tablets, 5 ml") }, modifier = Modifier.fillMaxWidth(), enabled = !archived)
 
             SectionTitle("Form")
             ChoiceChips(MedForm.entries, form.form, { it.label }, { form.form = it })
 
             SectionTitle("For")
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                profiles.forEach { p ->
-                    FilterChip(selected = form.profileId == p.id, onClick = { form.profileId = p.id }, label = { Text(p.name) }, leadingIcon = { ProfileBadge(p, 22.dp) })
-                }
-                TextButton(onClick = onAddProfile) { Text("+ Person or pet") }
-            }
+            Segmented(profiles.map { it.id }, form.profileId, { id -> profiles.firstOrNull { it.id == id }?.name ?: "" }, { form.profileId = it })
+            TextButton(onClick = onAddProfile) { Text("Add a person or pet") }
 
             SectionTitle("When")
-            ChoiceChips(Kind.entries, form.kind, { it.label }, { form.kind = it })
+            Segmented(Kind.entries, form.kind, { it.label }, { form.kind = it })
             Spacer(Modifier.height(8.dp))
             when (form.kind) {
                 Kind.FIXED -> FixedEditor(form, context)
                 Kind.INTERVAL -> IntervalEditor(form, context)
                 Kind.AS_NEEDED -> {
                     Text("No reminders. Log each dose with one tap on the Today screen.", style = MaterialTheme.typography.bodySmall)
-                    OutlinedTextField(
+                    Field(
                         form.gapHours, { form.gapHours = it }, label = { Text("Minimum hours between doses (optional)") },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                     )
@@ -221,8 +216,18 @@ fun EditMedicineScreen(medicineId: Long, onDone: () -> Unit, onAddProfile: () ->
             }
 
             SectionTitle("Note")
-            OutlinedTextField(form.note, { form.note = it }, label = { Text("Note (optional)") }, placeholder = { Text("e.g. with food") }, modifier = Modifier.fillMaxWidth(), minLines = 2)
+            Field(form.note, { form.note = it }, label = { Text("Note (optional)") }, placeholder = { Text("e.g. with food") }, modifier = Modifier.fillMaxWidth(), minLines = 2)
 
+            val summary = form.schedule().getOrNull()?.describe()
+            val who = profiles.firstOrNull { it.id == form.profileId }?.name
+            if (summary != null && form.name.isNotBlank()) {
+                Text(
+                    listOfNotNull(who, listOf(form.name.trim(), form.strength.trim()).filter { it.isNotEmpty() }.joinToString(" ")).joinToString(": ") + ". " + summary + ".",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 20.dp),
+                )
+            }
             error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 12.dp)) }
 
             Spacer(Modifier.height(20.dp))
@@ -249,8 +254,8 @@ fun EditMedicineScreen(medicineId: Long, onDone: () -> Unit, onAddProfile: () ->
                         onDone()
                     }
                 },
-                modifier = Modifier.fillMaxWidth().height(56.dp),
-            ) { Text("Save") }
+                modifier = Modifier.fillMaxWidth().height(58.dp),
+            ) { Text("Save medicine") }
 
             existing?.let { med ->
                 Spacer(Modifier.height(12.dp))
@@ -313,8 +318,8 @@ private fun FixedEditor(form: Form, context: Context) {
                 FilterChip(selected = d in form.weekdays, onClick = { if (d in form.weekdays) form.weekdays.remove(d) else form.weekdays.add(d) }, label = { Text(d.short()) })
             }
         }
-        Days.EVERY_N -> OutlinedTextField(form.everyN, { form.everyN = it }, label = { Text("Every how many days") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
-        Days.MONTHLY -> OutlinedTextField(form.dayOfMonth, { form.dayOfMonth = it }, label = { Text("Day of the month (1 to 31)") }, supportingText = { Text("In shorter months, the 29th to 31st fall on the last day.") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
+        Days.EVERY_N -> Field(form.everyN, { form.everyN = it }, label = { Text("Every how many days") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
+        Days.MONTHLY -> Field(form.dayOfMonth, { form.dayOfMonth = it }, label = { Text("Day of the month (1 to 31)") }, supportingText = { Text("In shorter months, the 29th to 31st fall on the last day.") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
     }
     Spacer(Modifier.height(8.dp))
     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -330,7 +335,7 @@ private fun FixedEditor(form: Form, context: Context) {
 
 @Composable
 private fun IntervalEditor(form: Form, context: Context) {
-    OutlinedTextField(
+    Field(
         form.intervalHours, { form.intervalHours = it }, label = { Text("Hours between doses") },
         supportingText = { Text("Counted from when you actually take each dose.") },
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth(),

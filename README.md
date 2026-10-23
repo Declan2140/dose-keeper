@@ -38,3 +38,7 @@ bought, since purchases only work once the app is on Google Play.
 ## Build
 
 Needs JDK 17 and the Android SDK (API 35). `./gradlew :app:assembleDebug`. CI builds every push.
+
+## Credits
+
+Geist font by Vercel, under the SIL Open Font License 1.1 (see `FONT-LICENSE-Geist.txt`).

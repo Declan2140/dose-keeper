@@ -27,7 +27,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import app.dosekeeper.app
 import app.dosekeeper.billing.UnlockManager
@@ -64,13 +63,13 @@ fun HistoryScreen() {
 
     LazyColumn(
         Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(16.dp),
+        contentPadding = PaddingValues(start = 24.dp, end = 24.dp, top = 32.dp, bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        item { Text("History", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold) }
+        item { Text("History", style = MaterialTheme.typography.headlineLarge, modifier = Modifier.padding(bottom = 8.dp)) }
         if (profiles.size > 1) {
             item {
-                ChoiceChips(listOf<Long?>(null) + profiles.map { it.id }, profileFilter, { id -> profileById[id]?.name ?: "Everyone" }, {
+                Segmented(listOf<Long?>(null) + profiles.map { it.id }, profileFilter, { id -> profileById[id]?.name ?: "Everyone" }, {
                     profileFilter = it
                     medicineFilter = null
                 })
@@ -86,7 +85,7 @@ fun HistoryScreen() {
         byDay.forEach { (day, dayLogs) ->
             item(key = "day-$day") {
                 val taken = dayLogs.count { it.doseStatus == DoseStatus.TAKEN }
-                Text("${day.friendly()}  ·  $taken of ${dayLogs.size} taken", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 12.dp))
+                Text("${day.friendly()}, $taken of ${dayLogs.size} taken", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 20.dp))
             }
             dayLogs.sortedByDescending { it.dueAt ?: it.actionAt }.forEach { log ->
                 item(key = "log-${log.id}") {
@@ -140,18 +139,18 @@ private fun DoseStatus.label() = when (this) {
 @Composable
 private fun HistoryRow(log: DoseLog, name: String, profile: app.dosekeeper.data.Profile?, onClick: () -> Unit) {
     val color = when (log.doseStatus) {
-        DoseStatus.TAKEN -> MaterialTheme.colorScheme.primary
+        DoseStatus.TAKEN -> MaterialTheme.colorScheme.secondary
         DoseStatus.SKIPPED -> MaterialTheme.colorScheme.onSurfaceVariant
         DoseStatus.MISSED -> Overdue
     }
-    Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-        ProfileBadge(profile, 28.dp)
-        Spacer(Modifier.width(12.dp))
+    Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+        ProfileBadge(profile, 36.dp)
+        Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
             Text(name)
             val time = log.dueAt?.let { "Due ${Instant.ofEpochMilli(it).localTime()}" } ?: "As needed"
-            val at = if (log.doseStatus == DoseStatus.MISSED) "" else " · ${log.doseStatus.label()} at ${Instant.ofEpochMilli(log.actionAt).localTime()}"
-            Text(time + at, style = MaterialTheme.typography.bodySmall)
+            val at = if (log.doseStatus == DoseStatus.MISSED) "" else ", ${log.doseStatus.label()} at ${Instant.ofEpochMilli(log.actionAt).localTime()}"
+            Text(time + at, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         Text(log.doseStatus.label().replaceFirstChar { it.uppercase() }, color = color, style = MaterialTheme.typography.labelLarge)
     }

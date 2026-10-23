@@ -21,11 +21,20 @@ data class TodayDose(
     val actionable: Boolean,
     val overdue: Boolean,
     val snoozedUntil: Instant?,
+    /** When it was taken or skipped. */
+    val at: Instant? = null,
 )
 
 data class AsNeededRow(val medicine: Medicine, val profile: Profile?, val lastTaken: Instant?, val notBefore: Instant?)
 
-data class TodayModel(val doses: List<TodayDose>, val asNeeded: List<AsNeededRow>)
+data class TodayModel(val doses: List<TodayDose>, val asNeeded: List<AsNeededRow>) {
+    /** Medicines with a dose still to take today, soonest first. One bottle each on the counter. */
+    val remaining: List<Medicine> =
+        doses.filter { it.status == null }.sortedBy { it.due }.map { it.medicine }.distinctBy { it.id }
+
+    val takenCount: Int = doses.count { it.status == DoseStatus.TAKEN }
+    val scheduledCount: Int = doses.size
+}
 
 /**
  * Builds Today from stored state. Overdue doses go first, then everything in time order.
@@ -66,7 +75,7 @@ fun buildToday(
             val due = log.dueAt ?: continue
             if (due < dayStart.toEpochMilli() || due >= dayEnd.toEpochMilli()) continue
             shown += due
-            doses += TodayDose(med, profile, Instant.ofEpochMilli(due), log.doseStatus, actionable = false, overdue = false, snoozedUntil = null)
+            doses += TodayDose(med, profile, Instant.ofEpochMilli(due), log.doseStatus, actionable = false, overdue = false, snoozedUntil = null, at = Instant.ofEpochMilli(log.actionAt))
         }
         if (!med.isActive) continue
 

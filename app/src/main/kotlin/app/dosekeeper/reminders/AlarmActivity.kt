@@ -4,26 +4,26 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
+import android.text.format.DateFormat
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -34,6 +34,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -43,12 +44,15 @@ import app.dosekeeper.app
 import app.dosekeeper.core.DoseStatus
 import app.dosekeeper.data.Medicine
 import app.dosekeeper.data.Profile
-import app.dosekeeper.ui.DoseKeeperTheme
-import kotlinx.coroutines.launch
+import app.dosekeeper.ui.AlarmTheme
+import app.dosekeeper.ui.Bottle
+import app.dosekeeper.ui.CounterScene
+import app.dosekeeper.ui.Ink
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
-import java.time.format.FormatStyle
+import java.util.Locale
+import kotlinx.coroutines.launch
 
 /** The full-screen alarm, shown over the lock screen when a dose is due. */
 class AlarmActivity : ComponentActivity() {
@@ -67,7 +71,7 @@ class AlarmActivity : ComponentActivity() {
     private fun render(intent: Intent) {
         val id = intent.getLongExtra(AlarmScheduler.EXTRA_MEDICINE_ID, 0L)
         setContent {
-            DoseKeeperTheme {
+            AlarmTheme {
                 if (id == AlarmScheduler.TEST_ID) {
                     TestAlarm(onDone = {
                         app.notifier.cancelTest()
@@ -127,66 +131,103 @@ private fun DoseAlarm(
     onAnswer: (DoseStatus) -> Unit,
     onSnooze: () -> Unit,
 ) {
-    val color = profile?.let { Color(it.colorArgb) } ?: MaterialTheme.colorScheme.primary
-    val due = med.nextDueAt?.let {
-        DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT).format(Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault()))
-    }
-    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-        Column(
-            Modifier.safeDrawingPadding().padding(24.dp).fillMaxSize(),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.SpaceBetween,
-        ) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Spacer(Modifier.height(24.dp))
-                if (profile != null) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Spacer(Modifier.size(18.dp).background(color, CircleShape))
-                        Text("  ${profile.name}", fontSize = 26.sp, color = color, fontWeight = FontWeight.SemiBold)
-                    }
-                    Spacer(Modifier.height(16.dp))
-                }
-                Text(med.name, fontSize = 40.sp, lineHeight = 46.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
-                val detail = listOf(med.strength, med.medForm.label).filter { it.isNotBlank() }.joinToString(" · ")
-                Text(detail, fontSize = 24.sp, textAlign = TextAlign.Center)
-                if (due != null) Text("Due $due", fontSize = 22.sp, modifier = Modifier.padding(top = 8.dp))
-                if (med.note.isNotBlank()) {
-                    Text(med.note, fontSize = 20.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 16.dp))
-                }
-            }
-            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Button(
-                    onClick = { onAnswer(DoseStatus.TAKEN) },
-                    modifier = Modifier.fillMaxWidth().height(88.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = color),
-                ) { Text("Taken", fontSize = 30.sp) }
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    OutlinedButton(onClick = onSnooze, modifier = Modifier.weight(1f).height(72.dp)) {
-                        Text("Snooze $snoozeMinutes min", fontSize = 20.sp, textAlign = TextAlign.Center)
-                    }
-                    OutlinedButton(onClick = { onAnswer(DoseStatus.SKIPPED) }, modifier = Modifier.weight(1f).height(72.dp)) {
-                        Text("Skip", fontSize = 20.sp)
-                    }
-                }
-            }
+    val context = LocalContext.current
+    val due = med.nextDueAt?.let { Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault()) }
+    val is24h = DateFormat.is24HourFormat(context)
+    val clock = due?.format(DateTimeFormatter.ofPattern(if (is24h) "H:mm" else "h:mm"))
+    val marker = if (is24h) null else due?.format(DateTimeFormatter.ofPattern("a", Locale.getDefault()))
+    AlarmScreen(
+        topLine = profile?.let { "For ${it.name}" },
+        clock = clock,
+        marker = marker,
+        title = med.name,
+        detail = listOf(med.strength, med.medForm.label.lowercase()).filter { it.isNotBlank() }.joinToString(" "),
+        note = med.note,
+        bottle = Bottle.of(med.medForm),
+    ) {
+        Button(
+            onClick = { onAnswer(DoseStatus.TAKEN) },
+            modifier = Modifier.fillMaxWidth().height(76.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Ink),
+        ) { Text("Taken", fontSize = 24.sp, fontWeight = FontWeight.SemiBold) }
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            OutlinedButton(
+                onClick = onSnooze,
+                modifier = Modifier.weight(1f).height(60.dp),
+                border = BorderStroke(1.dp, Color(0xFF3A3F46)),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
+            ) { Text("Snooze $snoozeMinutes min", fontSize = 18.sp, textAlign = TextAlign.Center) }
+            OutlinedButton(
+                onClick = { onAnswer(DoseStatus.SKIPPED) },
+                modifier = Modifier.weight(1f).height(60.dp),
+                border = BorderStroke(1.dp, Color(0xFF3A3F46)),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
+            ) { Text("Skip", fontSize = 18.sp) }
         }
     }
 }
 
 @Composable
 private fun TestAlarm(onDone: () -> Unit) {
-    Surface(Modifier.fillMaxSize()) {
+    AlarmScreen(
+        topLine = "Test alarm",
+        clock = null,
+        marker = null,
+        title = "It works",
+        detail = "If you can see and hear this, reminders will reach you, even with the screen locked.",
+        note = "",
+        bottle = Bottle.PILL,
+    ) {
+        Button(
+            onClick = onDone,
+            modifier = Modifier.fillMaxWidth().height(76.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Ink),
+        ) { Text("Done", fontSize = 24.sp, fontWeight = FontWeight.SemiBold) }
+    }
+}
+
+/** Dark full screen: the medicine's bottle drawn large and faint behind big type and buttons. */
+@Composable
+private fun AlarmScreen(
+    topLine: String?,
+    clock: String?,
+    marker: String?,
+    title: String,
+    detail: String,
+    note: String,
+    bottle: Bottle,
+    buttons: @Composable ColumnScope.() -> Unit,
+) {
+    BoxWithConstraints(Modifier.fillMaxSize().background(Ink)) {
+        CounterScene(
+            bottles = listOf(bottle),
+            modifier = Modifier.fillMaxSize(),
+            dark = true,
+            scale = 2f,
+            counterHeight = maxHeight * 0.34f,
+            endPadding = 40.dp,
+            tileSize = 64.dp,
+            maxShown = 1,
+        )
         Column(
-            Modifier.safeDrawingPadding().padding(24.dp).fillMaxSize(),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
+            Modifier.fillMaxSize().safeDrawingPadding().padding(start = 24.dp, end = 24.dp, top = 40.dp, bottom = 32.dp),
+            verticalArrangement = Arrangement.SpaceBetween,
         ) {
-            Text("Test alarm", fontSize = 40.sp, fontWeight = FontWeight.Bold)
-            Text(
-                "If you can see and hear this, reminders will reach you, even with the screen locked.",
-                fontSize = 22.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(vertical = 24.dp),
-            )
-            Button(onClick = onDone, modifier = Modifier.fillMaxWidth().height(80.dp)) { Text("Done", fontSize = 28.sp) }
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                if (topLine != null) Text(topLine, fontSize = 17.sp, color = Color(0xFF9CA3AF))
+                if (clock != null) {
+                    Row(verticalAlignment = Alignment.Bottom) {
+                        Text(clock, style = MaterialTheme.typography.displayLarge, color = Color.White)
+                        if (marker != null) Text(" $marker", fontSize = 32.sp, color = Color(0xFF9CA3AF), modifier = Modifier.padding(bottom = 10.dp))
+                    }
+                }
+            }
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(title, style = MaterialTheme.typography.displaySmall, color = Color.White)
+                if (detail.isNotBlank()) Text(detail, fontSize = 21.sp, lineHeight = 28.sp, color = Color(0xFFD1D5DB))
+                if (note.isNotBlank()) Text(note, fontSize = 18.sp, lineHeight = 26.sp, color = Color(0xFF9CA3AF), modifier = Modifier.padding(top = 8.dp))
+            }
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp), content = buttons)
         }
     }
 }
