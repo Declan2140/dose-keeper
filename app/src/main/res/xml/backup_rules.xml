@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android's own backup (API 26-30): the database and settings. -->
+<full-backup-content>
+    <include domain="database" path="dosekeeper.db" />
+    <include domain="sharedpref" path="settings.xml" />
+</full-backup-content>

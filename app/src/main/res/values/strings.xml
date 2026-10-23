@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Dose Keeper</string>
+    <string name="channel_alarms">Dose alarms</string>
+    <string name="channel_alarms_desc">Loud reminders when a dose is due</string>
+    <string name="channel_status">Background status</string>
+    <string name="channel_status_desc">Quiet notices, such as a backup failing</string>
+</resources>
