@@ -34,12 +34,12 @@ fun Onboarding(onFinished: () -> Unit) {
         ) {
             if (step == 0) {
                 Spacer(Modifier.height(24.dp))
-                Text("Dose Keeper", style = MaterialTheme.typography.displaySmall)
+                Text("Countertop", style = MaterialTheme.typography.displaySmall)
                 Text("Medicine reminders that ring every time.", style = MaterialTheme.typography.titleLarge)
                 Text("No account. No internet needed. Your data stays on this phone.")
                 Text("Track medicines for yourself, your family and your pets, on set times, every few hours, or as needed.")
                 Text(
-                    "Dose Keeper records and reminds only. It doesn't give medical advice. Always follow your doctor's, pharmacist's or vet's instructions.",
+                    "Countertop records and reminds only. It doesn't give medical advice. Always follow your doctor's, pharmacist's or vet's instructions.",
                     style = MaterialTheme.typography.bodySmall,
                 )
                 Spacer(Modifier.height(12.dp))

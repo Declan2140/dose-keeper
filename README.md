@@ -1,4 +1,4 @@
-# Dose Keeper (working name)
+# Countertop
 
 A medication reminder for Android that rings every time, works fully offline, and needs no account.
 Tracks medicines for you, your family and your pets.
@@ -11,10 +11,10 @@ Spec: see the "Medication reminder MVP spec" doc in the App Redesign project.
    **dose-keeper-debug-apk** under Artifacts. It's a zip with one `.apk` inside.
 2. Copy or download the `.apk` to your phone and open it. Android asks to allow installs from that
    app (Files, Chrome or Drive); allow it once.
-3. Open Dose Keeper and work through the setup screen. On a Samsung phone, also follow
+3. Open Countertop and work through the setup screen. On a Samsung phone, also follow
    Settings → Reliability checklist → Samsung steps, then tap **Test alarm in 10 seconds** and lock the phone.
 
-The test build installs as "Dose Keeper" with the package `app.dosekeeper.debug`, so it can sit next
+The test build installs as "Countertop" with the package `app.countertop.debug`, so it can sit next
 to the Play Store version later. In test builds, Settings has a switch to pretend the $5 unlock was
 bought, since purchases only work once the app is on Google Play.
 

@@ -58,12 +58,12 @@ class BackupManager(
         if (!force && !due) return@withContext
         try {
             val dir = DocumentFile.fromTreeUri(context, folder) ?: error("Backup folder is gone")
-            val name = "dose-keeper-auto-" + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd-HHmm")) + ".json"
+            val name = "countertop-auto-" + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd-HHmm")) + ".json"
             val file = dir.createFile("application/json", name) ?: error("Couldn't write to the backup folder")
             val (json, _) = buildJson()
             context.contentResolver.openOutputStream(file.uri, "wt")!!.use { it.write(json.toString(2).toByteArray()) }
             dir.listFiles()
-                .filter { it.name?.startsWith("dose-keeper-auto-") == true }
+                .filter { it.name?.startsWith("countertop-auto-") == true }
                 .sortedByDescending { it.name }
                 .drop(KEEP)
                 .forEach { it.delete() }
@@ -71,7 +71,7 @@ class BackupManager(
             settings.lastAutoBackupError = null
         } catch (e: Exception) {
             settings.lastAutoBackupError = e.message ?: e.javaClass.simpleName
-            Notifier(context).showStatus(Notifier.BACKUP_NOTIFICATION_ID, "Auto backup failed", "Open Dose Keeper to pick the backup folder again.")
+            Notifier(context).showStatus(Notifier.BACKUP_NOTIFICATION_ID, "Auto backup failed", "Open Countertop to pick the backup folder again.")
         }
     }
 
@@ -111,8 +111,8 @@ class BackupManager(
             val sealed = BackupCrypto.Sealed(b64.decode(json.getString("salt")), b64.decode(json.getString("iv")), b64.decode(json.getString("data")))
             json = JSONObject(String(BackupCrypto.open(sealed, password.toCharArray())))
         }
-        require(json.optString("format") == FORMAT) { "This isn't a Dose Keeper backup file" }
-        require(json.optInt("version") <= VERSION) { "This backup is from a newer version of Dose Keeper. Update the app first." }
+        require(json.optString("format") == FORMAT) { "This isn't a Countertop backup file" }
+        require(json.optInt("version") <= VERSION) { "This backup is from a newer version of Countertop. Update the app first." }
 
         val profiles = json.getJSONArray("profiles").objects().map(::profileFrom)
         val medicines = json.getJSONArray("medicines").objects().map(::medicineFrom)

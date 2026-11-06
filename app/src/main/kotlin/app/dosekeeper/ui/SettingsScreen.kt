@@ -147,7 +147,7 @@ fun SettingsScreen(onOpenProfiles: () -> Unit, onOpenReliability: () -> Unit) {
 
         SectionTitle("Unlock")
         if (unlocked) {
-            Text("Unlocked. Thank you for supporting Dose Keeper!")
+            Text("Unlocked. Thank you for supporting Countertop!")
         } else {
             Text("One payment of ${price ?: "$5"}, no subscription. Unlocks unlimited people and pets, full history, custom alarm sounds, and future features like refills and PDF export.", style = MaterialTheme.typography.bodySmall)
             Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -164,7 +164,7 @@ fun SettingsScreen(onOpenProfiles: () -> Unit, onOpenReliability: () -> Unit) {
 
         SectionTitle("About")
         Text(
-            "Dose Keeper records and reminds only. It doesn't give medical advice. Always follow your doctor's, pharmacist's or vet's instructions.",
+            "Countertop records and reminds only. It doesn't give medical advice. Always follow your doctor's, pharmacist's or vet's instructions.",
             style = MaterialTheme.typography.bodySmall,
         )
         Text("No account, no ads, no tracking. Nothing leaves your phone unless you save a backup.", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
@@ -181,7 +181,7 @@ fun SettingsScreen(onOpenProfiles: () -> Unit, onOpenReliability: () -> Unit) {
             onConfirm = { pw ->
                 passwordFor = null
                 pendingExportPassword = pw.ifEmpty { null }
-                exportLauncher.launch("dose-keeper-backup-${LocalDate.now()}.json")
+                exportLauncher.launch("countertop-backup-${LocalDate.now()}.json")
             },
         )
         is PasswordAsk.Restore -> PasswordDialog(

@@ -145,23 +145,23 @@ private data class MakerHelp(val name: String, val matches: (String) -> Boolean,
 
 private val MAKER_HELP = listOf(
     MakerHelp("Samsung", { it.contains("samsung") }, listOf(
-        "Open Settings, then Apps, then Dose Keeper. Tap Battery and choose Unrestricted.",
+        "Open Settings, then Apps, then Countertop. Tap Battery and choose Unrestricted.",
         "Open Settings, then Battery (or Device care, then Battery), then Background usage limits.",
-        "Tap Never sleeping apps, tap +, and add Dose Keeper.",
-        "Check that Dose Keeper is not listed under Sleeping apps or Deep sleeping apps.",
+        "Tap Never sleeping apps, tap +, and add Countertop.",
+        "Check that Countertop is not listed under Sleeping apps or Deep sleeping apps.",
         "Optional: turn off \"Put unused apps to sleep\" on the same screen.",
     )),
     MakerHelp("Xiaomi, Redmi, POCO", { it.contains("xiaomi") || it.contains("redmi") || it.contains("poco") }, listOf(
-        "Open Settings, then Apps, then Manage apps, then Dose Keeper.",
+        "Open Settings, then Apps, then Manage apps, then Countertop.",
         "Turn on Autostart.",
         "Tap Battery saver and choose No restrictions.",
-        "Open your recent apps, press and hold Dose Keeper, and tap the lock icon.",
+        "Open your recent apps, press and hold Countertop, and tap the lock icon.",
     )),
     MakerHelp("OnePlus, OPPO, realme", { it.contains("oneplus") || it.contains("oppo") || it.contains("realme") }, listOf(
-        "Open Settings, then Apps, then Dose Keeper, then Battery usage.",
+        "Open Settings, then Apps, then Countertop, then Battery usage.",
         "Turn on Allow background activity (or choose Unrestricted).",
-        "Open Settings, then Battery, then Battery optimization. Set Dose Keeper to Don't optimize.",
-        "Open your recent apps, tap the menu on Dose Keeper, and choose Lock.",
+        "Open Settings, then Battery, then Battery optimization. Set Countertop to Don't optimize.",
+        "Open your recent apps, tap the menu on Countertop, and choose Lock.",
     )),
 )
 

@@ -158,7 +158,7 @@ fun UnlockDialog(reason: String, onDismiss: () -> Unit) {
     }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Unlock Dose Keeper") },
+        title = { Text("Unlock Countertop") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(reason)
