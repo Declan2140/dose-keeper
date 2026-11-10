@@ -41,6 +41,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import app.dosekeeper.BuildConfig
 import app.dosekeeper.app
+import app.dosekeeper.billing.UnlockManager
 import app.dosekeeper.core.BackupCrypto
 import app.dosekeeper.core.DoseCalculator
 import kotlinx.coroutines.launch
@@ -48,7 +49,7 @@ import java.time.Instant
 import java.time.LocalDate
 
 @Composable
-fun SettingsScreen(onOpenProfiles: () -> Unit, onOpenReliability: () -> Unit) {
+fun SettingsScreen(onOpenProfiles: () -> Unit, onOpenReliability: () -> Unit, onOpenHistory: () -> Unit) {
     val context = LocalContext.current
     val app = context.app
     val scope = rememberCoroutineScope()
@@ -147,7 +148,25 @@ fun SettingsScreen(onOpenProfiles: () -> Unit, onOpenReliability: () -> Unit) {
 
         SectionTitle("Unlock")
         if (unlocked) {
-            Text("Unlocked. Thank you for supporting Countertop!")
+            Panel {
+                Text("Unlocked. Thank you for supporting Countertop!", style = MaterialTheme.typography.titleSmall)
+                Text("Here's what you have now:", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp, bottom = 4.dp))
+                UnlockedFeature(
+                    "Family and pets",
+                    "Add as many people and pets as you like. Each medicine then has a For picker, and Today, Medicines and History can show one person at a time.",
+                    "Add a person or pet", onOpenProfiles,
+                )
+                UnlockedFeature(
+                    "Custom alarm sounds",
+                    "Give any medicine its own alarm sound: open it under Medicines and tap Choose next to Alarm sound.",
+                    null, null,
+                )
+                UnlockedFeature(
+                    "Full history",
+                    "History keeps every dose ever recorded, not just the last ${UnlockManager.FREE_HISTORY_DAYS} days.",
+                    "Open History", onOpenHistory,
+                )
+            }
         } else {
             Text("One payment of ${price ?: "$5"}, no subscription. Unlocks unlimited people and pets, full history, custom alarm sounds, and future features like refills and PDF export.", style = MaterialTheme.typography.bodySmall)
             Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -239,6 +258,17 @@ private fun NavRow(title: String, subtitle: String, onClick: () -> Unit) {
                 Text(subtitle, style = MaterialTheme.typography.bodySmall)
             }
             Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null)
+        }
+    }
+}
+
+@Composable
+private fun UnlockedFeature(title: String, body: String, action: String?, onAction: (() -> Unit)?) {
+    Column(Modifier.padding(top = 10.dp)) {
+        Text(title, style = MaterialTheme.typography.labelLarge)
+        Text(body, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (action != null && onAction != null) {
+            TextButton(onClick = onAction, contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) { Text(action) }
         }
     }
 }
