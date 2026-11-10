@@ -157,6 +157,11 @@ fun SettingsScreen(onOpenProfiles: () -> Unit, onOpenReliability: () -> Unit, on
                     "Add a person or pet", onOpenProfiles,
                 )
                 UnlockedFeature(
+                    "Custom alarm sounds",
+                    "Give any medicine its own alarm sound: open it under Medicines and tap Choose next to Alarm sound.",
+                    null, null,
+                )
+                UnlockedFeature(
                     "Full history",
                     "History keeps every dose ever recorded, not just the last ${UnlockManager.FREE_HISTORY_DAYS} days.",
                     "Open History", onOpenHistory,
@@ -258,10 +263,12 @@ private fun NavRow(title: String, subtitle: String, onClick: () -> Unit) {
 }
 
 @Composable
-private fun UnlockedFeature(title: String, body: String, action: String, onAction: () -> Unit) {
+private fun UnlockedFeature(title: String, body: String, action: String?, onAction: (() -> Unit)?) {
     Column(Modifier.padding(top = 10.dp)) {
         Text(title, style = MaterialTheme.typography.labelLarge)
         Text(body, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        TextButton(onClick = onAction, contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) { Text(action) }
+        if (action != null && onAction != null) {
+            TextButton(onClick = onAction, contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) { Text(action) }
+        }
     }
 }

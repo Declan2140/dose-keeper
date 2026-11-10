@@ -1,9 +1,15 @@
 package app.dosekeeper.ui
 
+import android.app.Activity
 import android.app.DatePickerDialog
 import android.app.TimePickerDialog
 import android.content.Context
+import android.content.Intent
+import android.media.RingtoneManager
+import android.net.Uri
 import android.text.format.DateFormat
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -58,6 +64,7 @@ import app.dosekeeper.core.ScheduleCodec
 import app.dosekeeper.data.MedForm
 import app.dosekeeper.data.MedStatus
 import app.dosekeeper.data.Medicine
+import app.dosekeeper.reminders.Notifier
 import kotlinx.coroutines.launch
 import java.time.DayOfWeek
 import java.time.Duration
@@ -90,9 +97,10 @@ private class Form {
     var quietStart by mutableStateOf(LocalTime.of(22, 0))
     var quietEnd by mutableStateOf(LocalTime.of(7, 0))
     var gapHours by mutableStateOf("")
+    var soundUri by mutableStateOf<String?>(null)
 
     fun load(med: Medicine) {
-        name = med.name; strength = med.strength; form = med.medForm; note = med.note; profileId = med.profileId
+        name = med.name; strength = med.strength; form = med.medForm; note = med.note; profileId = med.profileId; soundUri = med.soundUri
         when (val s = med.parsedSchedule) {
             is Schedule.FixedTimes -> {
                 kind = Kind.FIXED
@@ -218,6 +226,11 @@ fun EditMedicineScreen(medicineId: Long, onDone: () -> Unit, onAddProfile: () ->
             SectionTitle("Note")
             Field(form.note, { form.note = it }, label = { Text("Note (optional)") }, placeholder = { Text("e.g. with food") }, modifier = Modifier.fillMaxWidth(), minLines = 2)
 
+            if (form.kind != Kind.AS_NEEDED) {
+                SectionTitle("Alarm sound")
+                AlarmSoundRow(form)
+            }
+
             val summary = form.schedule().getOrNull()?.describe()
             val who = profiles.firstOrNull { it.id == form.profileId }?.name
             if (summary != null && form.name.isNotBlank()) {
@@ -247,7 +260,7 @@ fun EditMedicineScreen(medicineId: Long, onDone: () -> Unit, onAddProfile: () ->
                     val base = existing ?: Medicine(profileId = profileId!!, name = name, schedule = encoded)
                     val updated = base.copy(
                         name = name, strength = form.strength.trim(), form = form.form.name, note = form.note.trim(),
-                        profileId = profileId!!, schedule = encoded,
+                        profileId = profileId!!, schedule = encoded, soundUri = form.soundUri,
                     )
                     scope.launch {
                         app.engine.save(updated, scheduleChanged = existing?.schedule != encoded)
@@ -369,4 +382,53 @@ private fun pickTime(context: Context, initial: LocalTime, onPick: (LocalTime) -
 
 private fun pickDate(context: Context, initial: LocalDate, onPick: (LocalDate) -> Unit) {
     DatePickerDialog(context, { _, y, m, d -> onPick(LocalDate.of(y, m + 1, d)) }, initial.year, initial.monthValue - 1, initial.dayOfMonth).show()
+}
+
+/**
+ * The medicine's own alarm sound, chosen with the phone's sound picker. Part of the unlock;
+ * free users see the default and are offered the unlock when they tap Choose.
+ */
+@Composable
+private fun AlarmSoundRow(form: Form) {
+    val context = LocalContext.current
+    val unlocked by context.app.unlock.unlocked.collectAsState()
+    var showUnlock by remember { mutableStateOf(false) }
+    val defaultUri = remember { RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM) }
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode != Activity.RESULT_OK) return@rememberLauncherForActivityResult
+        @Suppress("DEPRECATION")
+        val uri = result.data?.getParcelableExtra<Uri>(RingtoneManager.EXTRA_RINGTONE_PICKED_URI)
+        form.soundUri = uri?.takeIf { it != defaultUri && !RingtoneManager.isDefault(it) }?.toString()
+    }
+    val name = remember(form.soundUri) {
+        form.soundUri?.let { Notifier.soundTitle(context, Uri.parse(it)) ?: "Custom sound" } ?: "Default alarm"
+    }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(name, Modifier.weight(1f))
+        if (form.soundUri != null) {
+            TextButton(onClick = { form.soundUri = null }) { Text("Reset") }
+        }
+        TextButton(onClick = {
+            if (!unlocked) {
+                showUnlock = true
+                return@TextButton
+            }
+            val current = form.soundUri?.let(Uri::parse) ?: defaultUri
+            picker.launch(
+                Intent(RingtoneManager.ACTION_RINGTONE_PICKER)
+                    .putExtra(RingtoneManager.EXTRA_RINGTONE_TYPE, RingtoneManager.TYPE_ALL)
+                    .putExtra(RingtoneManager.EXTRA_RINGTONE_TITLE, "Alarm sound")
+                    .putExtra(RingtoneManager.EXTRA_RINGTONE_SHOW_DEFAULT, true)
+                    .putExtra(RingtoneManager.EXTRA_RINGTONE_SHOW_SILENT, false)
+                    .putExtra(RingtoneManager.EXTRA_RINGTONE_DEFAULT_URI, defaultUri)
+                    .putExtra(RingtoneManager.EXTRA_RINGTONE_EXISTING_URI, current),
+            )
+        }) { Text("Choose") }
+    }
+    Text(
+        "Give this medicine its own sound, so you know what's due before you look.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    if (showUnlock) UnlockDialog("Custom alarm sounds are part of the unlock.", onDismiss = { showUnlock = false })
 }
