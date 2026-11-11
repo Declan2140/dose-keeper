@@ -10,6 +10,7 @@ import app.dosekeeper.reminders.AlarmScheduler
 import app.dosekeeper.reminders.Notifier
 import app.dosekeeper.reminders.ReminderEngine
 import app.dosekeeper.reminders.WatchdogWorker
+import app.dosekeeper.report.DoctorReport
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -27,6 +28,7 @@ class DoseKeeperApp : Application() {
     val engine by lazy { ReminderEngine(db, settings, alarms, notifier) }
     val backup by lazy { BackupManager(this, db, settings, engine) }
     val unlock by lazy { UnlockManager(this, settings, appScope) }
+    val report by lazy { DoctorReport(this, db) }
 
     override fun onCreate() {
         super.onCreate()

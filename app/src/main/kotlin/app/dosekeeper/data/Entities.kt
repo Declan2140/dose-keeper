@@ -1,5 +1,6 @@
 package app.dosekeeper.data
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
@@ -19,8 +20,10 @@ data class Profile(
     val sortOrder: Int = 0,
 )
 
-enum class MedForm(val label: String) {
-    PILL("Pill"), LIQUID("Liquid"), DROPS("Drops"), INHALER("Inhaler"), INJECTION("Injection"), CREAM("Cream"), OTHER("Other")
+/** [unit] is what refill tracking counts: "12 pills left", "80 ml left". */
+enum class MedForm(val label: String, val unit: String) {
+    PILL("Pill", "pills"), LIQUID("Liquid", "ml"), DROPS("Drops", "drops"), INHALER("Inhaler", "puffs"),
+    INJECTION("Injection", "doses"), CREAM("Cream", "doses"), OTHER("Other", "doses")
 }
 
 enum class MedStatus { ACTIVE, PAUSED, ARCHIVED }
@@ -41,6 +44,14 @@ data class Medicine(
     val snoozedUntil: Long? = null,
     /** A custom alarm sound (unlock feature). Null uses the default alarm sound. */
     val soundUri: String? = null,
+    /** Refill tracking (unlock feature): how much is left, in [MedForm.unit]. Null when not tracked. */
+    val supplyLeft: Double? = null,
+    /** How much one dose uses, e.g. 2 pills or 5 ml. */
+    @ColumnInfo(defaultValue = "1.0") val perDose: Double = 1.0,
+    /** The size of the last refill, offered again next time. */
+    val refillSize: Double? = null,
+    /** Set once the "running low" notice has been shown, so it isn't repeated every dose. */
+    @ColumnInfo(defaultValue = "0") val lowSupplyNotified: Boolean = false,
     val createdAt: Long = System.currentTimeMillis(),
 ) {
     val parsedSchedule: Schedule get() = ScheduleCodec.decode(schedule)
@@ -56,6 +67,8 @@ data class Medicine(
         nextDueAt = state.nextDue?.toEpochMilli(),
         snoozedUntil = state.snoozedUntil?.toEpochMilli(),
     )
+
+    val tracksSupply: Boolean get() = supplyLeft != null
 
     /** "Amoxicillin 250 mg" */
     val displayName: String get() = if (strength.isBlank()) name else "$name $strength"

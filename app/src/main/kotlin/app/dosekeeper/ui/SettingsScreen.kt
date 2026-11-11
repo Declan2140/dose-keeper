@@ -162,13 +162,23 @@ fun SettingsScreen(onOpenProfiles: () -> Unit, onOpenReliability: () -> Unit, on
                     null, null,
                 )
                 UnlockedFeature(
+                    "Refill tracking",
+                    "Open a medicine under Medicines and turn on Track supply. The count goes down with each dose, and you get a reminder about a week before it runs out.",
+                    null, null,
+                )
+                UnlockedFeature(
+                    "Doctor report",
+                    "A PDF of someone's medicines and every dose taken, skipped or missed, ready to print or share. Tap Doctor report at the top of History.",
+                    "Open History", onOpenHistory,
+                )
+                UnlockedFeature(
                     "Full history",
                     "History keeps every dose ever recorded, not just the last ${UnlockManager.FREE_HISTORY_DAYS} days.",
                     "Open History", onOpenHistory,
                 )
             }
         } else {
-            Text("One payment of ${price ?: "$5"}, no subscription. Unlocks unlimited people and pets, full history, custom alarm sounds, and future features like refills and PDF export.", style = MaterialTheme.typography.bodySmall)
+            Text("One payment of ${price ?: "$5"}, no subscription. Unlocks unlimited people and pets, full history, custom alarm sounds, refill tracking and doctor reports.", style = MaterialTheme.typography.bodySmall)
             Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = { context.findActivity()?.let(app.unlock::buy) }, Modifier.weight(1f)) { Text("Unlock for ${price ?: "$5"}") }
                 OutlinedButton(onClick = app.unlock::restore, Modifier.weight(1f)) { Text("Restore purchase") }

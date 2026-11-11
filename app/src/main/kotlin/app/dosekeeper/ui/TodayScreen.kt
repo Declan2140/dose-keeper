@@ -30,6 +30,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
@@ -65,10 +66,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import app.dosekeeper.app
 import app.dosekeeper.core.DoseStatus
+import app.dosekeeper.core.Supply
+import app.dosekeeper.reminders.Notifier
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.time.Duration
@@ -91,6 +95,7 @@ fun TodayScreen(onAddMedicine: () -> Unit, onOpenReliability: () -> Unit) {
     var profileFilter by remember { mutableStateOf<Long?>(null) }
     var choosing by remember { mutableStateOf<TodayDose?>(null) }
     var unchecking by remember { mutableStateOf<TodayDose?>(null) }
+    var refilling by remember { mutableStateOf<app.dosekeeper.data.Medicine?>(null) }
 
     // Re-evaluate late doses every 30 seconds, and catch up on anything missed while closed.
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
@@ -147,6 +152,14 @@ fun TodayScreen(onAddMedicine: () -> Unit, onOpenReliability: () -> Unit) {
                         Text("Reminders may not ring on this phone yet.", Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
                         TextButton(onClick = onOpenReliability) { Text("Fix") }
                     }
+                }
+            }
+            val low = meds.orEmpty()
+                .filter { it.isActive && it.tracksSupply && (profileFilter == null || it.profileId == profileFilter) }
+                .mapNotNull { med -> med.supplyOutlook(Instant.ofEpochMilli(now))?.takeIf { it.low }?.let { med to it } }
+            low.forEach { (med, outlook) ->
+                item(key = "low-${med.id}") {
+                    LowSupplyCard(med, outlook, Modifier.animateItem(), onRefilled = { refilling = med })
                 }
             }
             if (profiles.size > 1) {
@@ -239,6 +252,13 @@ fun TodayScreen(onAddMedicine: () -> Unit, onOpenReliability: () -> Unit) {
         }
     }
 
+    refilling?.let { med ->
+        RefillDialog(med, onDismiss = { refilling = null }, onRefill = { amount ->
+            refilling = null
+            haptics.soft()
+            scope.launch { app.engine.refill(med.id, amount) }
+        })
+    }
     choosing?.let { dose ->
         AlertDialog(
             onDismissRequest = { choosing = null },
@@ -538,4 +558,43 @@ private fun AsNeededRowView(row: AsNeededRow, onLog: () -> Unit) {
         }
         HorizontalDivider(color = scheme.outlineVariant)
     }
+}
+
+/** "Time to refill" on Today, shown from about a week before a tracked supply runs out. */
+@Composable
+private fun LowSupplyCard(med: app.dosekeeper.data.Medicine, outlook: Supply.Outlook, modifier: Modifier, onRefilled: () -> Unit) {
+    Row(
+        modifier.padding(start = 24.dp, end = 24.dp, top = 16.dp).fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(16.dp))
+            .padding(start = 16.dp, top = 10.dp, bottom = 10.dp, end = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("Refill ${med.name}", style = MaterialTheme.typography.titleSmall)
+            Text(supplyLine(outlook, med.medForm.unit, med.supplyLeft ?: 0.0), style = MaterialTheme.typography.bodySmall, color = Overdue)
+        }
+        TextButton(onClick = onRefilled) { Text("Refilled") }
+    }
+}
+
+/** Adds a refill to the count. Offers the last refill size, since it's usually the same. */
+@Composable
+private fun RefillDialog(med: app.dosekeeper.data.Medicine, onDismiss: () -> Unit, onRefill: (Double) -> Unit) {
+    var amount by remember { mutableStateOf(med.refillSize?.let(Notifier::formatAmount) ?: "") }
+    val parsed = amount.replace(',', '.').trim().toDoubleOrNull()?.takeIf { it > 0 && it.isFinite() }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Refill ${med.name}") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("How many ${med.medForm.unit} did you get? They're added to the ${Notifier.formatAmount(med.supplyLeft ?: 0.0)} you have left.")
+                Field(
+                    amount, { amount = it }, label = { Text("Amount (${med.medForm.unit})") }, singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                )
+            }
+        },
+        confirmButton = { TextButton(onClick = { parsed?.let(onRefill) }, enabled = parsed != null) { Text("Add") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
 }
