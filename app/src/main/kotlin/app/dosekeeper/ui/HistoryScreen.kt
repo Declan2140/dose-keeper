@@ -34,6 +34,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import app.dosekeeper.app
+import app.dosekeeper.report.DoctorReport
 import app.dosekeeper.billing.UnlockManager
 import app.dosekeeper.core.DoseStatus
 import app.dosekeeper.data.DoseLog
@@ -251,7 +252,7 @@ private fun DoctorReportFlow(profiles: List<app.dosekeeper.data.Profile>, initia
         confirmButton = {
             TextButton(
                 enabled = profile != null && !working,
-                onClick = { profile?.let { saver.launch(app.dosekeeper.report.DoctorReport.fileName(it, to)) } },
+                onClick = { profile?.let { saver.launch(DoctorReport.fileName(it, to)) } },
             ) { Text(if (working) "Making…" else "Save PDF") }
         },
         dismissButton = { TextButton(onClick = onDone) { Text("Cancel") } },
