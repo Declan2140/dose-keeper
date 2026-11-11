@@ -109,6 +109,15 @@ private fun MedicineRow(med: Medicine, profile: app.dosekeeper.data.Profile?, on
                     MedStatus.ARCHIVED -> "Archived"
                 }
                 if (status != null) Text(status, style = MaterialTheme.typography.bodySmall, color = if (dim) scheme.onSurfaceVariant else scheme.secondary)
+                if (med.medStatus != MedStatus.ARCHIVED) {
+                    med.supplyOutlook()?.let { outlook ->
+                        Text(
+                            supplyLine(outlook, med.medForm.unit, med.supplyLeft ?: 0.0),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (outlook.low && !dim) Overdue else scheme.onSurfaceVariant,
+                        )
+                    }
+                }
             }
         }
         HorizontalDivider(color = scheme.outlineVariant)
