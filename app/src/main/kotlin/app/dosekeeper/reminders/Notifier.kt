@@ -170,6 +170,13 @@ class Notifier(private val context: Context) {
     fun cancelLowSupply(medicineId: Long) = manager.cancel(lowSupplyId(medicineId))
 
     fun cancelDose(medicineId: Long) = manager.cancel(notificationId(medicineId))
+
+    /** Medicines whose alarm is ringing right now (shown and not yet answered), oldest first. */
+    fun ringingDoseIds(): List<Long> =
+        runCatching { manager.activeNotifications.toList() }.getOrDefault(emptyList())
+            .filter { it.notification.channelId?.startsWith(CHANNEL_ALARMS) == true && it.id != TEST_NOTIFICATION_ID }
+            .sortedBy { it.postTime }
+            .map { it.id.toLong() }
     fun cancelTest() = manager.cancel(TEST_NOTIFICATION_ID)
 
     private fun hasPostPermission(): Boolean =

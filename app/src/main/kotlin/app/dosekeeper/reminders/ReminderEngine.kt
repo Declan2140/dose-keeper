@@ -48,6 +48,7 @@ class ReminderEngine(
     }
 
     suspend fun answer(medicineId: Long, status: DoseStatus) = lock.withLock {
+        adoptZoneChange()
         val med = db.medicines().get(medicineId) ?: return@withLock
         if (med.nextDueAt == null) return@withLock
         val now = Instant.now()
@@ -91,6 +92,7 @@ class ReminderEngine(
     }
 
     suspend fun snooze(medicineId: Long, minutes: Int = settings.snoozeMinutes) = lock.withLock {
+        adoptZoneChange()
         val med = db.medicines().get(medicineId) ?: return@withLock
         if (med.nextDueAt == null) return@withLock
         val updated = med.withTracker(DoseTracker.snooze(med.tracker, Instant.now(), minutes))
@@ -155,6 +157,7 @@ class ReminderEngine(
             notifier.showTest()
             return@withLock
         }
+        adoptZoneChange()
         val med = db.medicines().get(medicineId) ?: return@withLock
         if (!med.isActive) {
             alarms.cancel(medicineId)
@@ -179,15 +182,28 @@ class ReminderEngine(
      * Brings every medicine up to date and re-sets every alarm. Runs at app start, after a reboot,
      * update, clock or time zone change, a restore, and from the daily watchdog.
      */
-    suspend fun refreshAll() = lock.withLock {
+    suspend fun refreshAll() = lock.withLock { refreshLocked() }
+
+    /**
+     * If the phone has changed time zone since doses were last worked out, bring everything
+     * across before acting, so nothing is answered against times from the old zone.
+     */
+    private suspend fun adoptZoneChange() {
+        val last = settings.lastZone
+        if (last != null && last != zone.id) refreshLocked()
+    }
+
+    private suspend fun refreshLocked() {
         val now = Instant.now()
+        val zone = zone
+        val previousZone = settings.lastZone?.let { runCatching { ZoneId.of(it) }.getOrNull() } ?: zone
         for (med in db.medicines().getAll()) {
             if (!med.isActive) {
                 alarms.cancel(med.id)
                 continue
             }
             val schedule = runCatching { med.parsedSchedule }.getOrNull() ?: continue
-            val recomputed = DoseTracker.recompute(schedule, med.tracker, zone)
+            val recomputed = DoseTracker.zoneChanged(schedule, med.tracker, previousZone, zone)
             val (caught, missed) = DoseTracker.catchUp(schedule, recomputed, now, zone, settings.missedWindow)
             val updated = med.withTracker(caught)
             if (missed.isNotEmpty() || updated != med) {
@@ -199,6 +215,7 @@ class ReminderEngine(
             if (missed.isNotEmpty()) notifier.cancelDose(med.id)
             syncAlarm(updated)
         }
+        if (settings.lastZone != zone.id) settings.lastZone = zone.id
     }
 
     fun cancelAllAlarms(medicines: List<Medicine>) {

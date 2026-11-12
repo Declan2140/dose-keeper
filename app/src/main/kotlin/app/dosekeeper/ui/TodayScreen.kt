@@ -44,6 +44,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxState
 import androidx.compose.material3.SwipeToDismissBoxValue
@@ -65,6 +69,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextDecoration
@@ -96,6 +101,8 @@ fun TodayScreen(onAddMedicine: () -> Unit, onOpenReliability: () -> Unit) {
     var choosing by remember { mutableStateOf<TodayDose?>(null) }
     var unchecking by remember { mutableStateOf<TodayDose?>(null) }
     var refilling by remember { mutableStateOf<app.dosekeeper.data.Medicine?>(null) }
+    var takingEarly by remember { mutableStateOf<TodayDose?>(null) }
+    val snackbar = remember { SnackbarHostState() }
 
     // Re-evaluate late doses every 30 seconds, and catch up on anything missed while closed.
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
@@ -114,9 +121,21 @@ fun TodayScreen(onAddMedicine: () -> Unit, onOpenReliability: () -> Unit) {
     val canRing = remember(now) { app.alarms.canScheduleExact() && app.notifier.notificationsAllowed() }
 
     val haptics = rememberHaptics()
-    fun answer(dose: TodayDose, status: DoseStatus) {
+    fun record(dose: TodayDose, status: DoseStatus) {
         if (status == DoseStatus.TAKEN) haptics.taken() else haptics.soft()
-        scope.launch { app.engine.answer(dose.medicine.id, status) }
+        scope.launch {
+            app.engine.answer(dose.medicine.id, status)
+            // Every answer can be taken back for a few seconds, in case of a slip of the thumb.
+            snackbar.currentSnackbarData?.dismiss()
+            val what = if (status == DoseStatus.TAKEN) "taken" else "skipped"
+            val result = snackbar.showSnackbar("${dose.medicine.name} $what", actionLabel = "Undo", duration = SnackbarDuration.Short)
+            if (result == SnackbarResult.ActionPerformed) app.engine.undo(dose.medicine.id, dose.due.toEpochMilli())
+        }
+    }
+    fun answer(dose: TodayDose, status: DoseStatus) {
+        // Taking a dose well before it's due asks first, so a stray swipe can't log it hours early.
+        val early = Duration.between(Instant.now(), dose.due) > Duration.ofHours(1)
+        if (status == DoseStatus.TAKEN && early) takingEarly = dose else record(dose, status)
     }
     fun snooze(dose: TodayDose) {
         haptics.soft()
@@ -128,6 +147,7 @@ fun TodayScreen(onAddMedicine: () -> Unit, onOpenReliability: () -> Unit) {
     }
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbar) },
         floatingActionButton = {
             FloatingActionButton(onClick = onAddMedicine, shape = CircleShape, containerColor = MaterialTheme.colorScheme.primary) {
                 Icon(Icons.Filled.Add, "Add medicine")
@@ -139,7 +159,11 @@ fun TodayScreen(onAddMedicine: () -> Unit, onOpenReliability: () -> Unit) {
             contentPadding = PaddingValues(bottom = 96.dp),
         ) {
             item(key = "hero") {
-                Hero(model, items = model?.remaining.orEmpty().map { CounterItem(it.id, Bottle.of(it.medForm)) })
+                Hero(
+                    model,
+                    items = model?.remaining.orEmpty().map { CounterItem(it.id, Bottle.of(it.medForm)) },
+                    compact = LocalConfiguration.current.screenHeightDp < 480,
+                )
             }
             if (!canRing) {
                 item(key = "warn") {
@@ -218,7 +242,6 @@ fun TodayScreen(onAddMedicine: () -> Unit, onOpenReliability: () -> Unit) {
                         DoseRow(
                             dose, haptics,
                             onCircle = { answer(dose, DoseStatus.TAKEN) },
-                            onSnooze = { snooze(dose) },
                             onClick = { choosing = dose },
                         )
                     }
@@ -230,7 +253,7 @@ fun TodayScreen(onAddMedicine: () -> Unit, onOpenReliability: () -> Unit) {
                 for (dose in done) {
                     item(key = dose.key) {
                         Box(Modifier.animateItem()) {
-                            DoseRow(dose, haptics, onCircle = { undo(dose) }, onSnooze = {}, onClick = { unchecking = dose })
+                            DoseRow(dose, haptics, onCircle = { undo(dose) }, onClick = { unchecking = dose })
                         }
                     }
                 }
@@ -267,11 +290,22 @@ fun TodayScreen(onAddMedicine: () -> Unit, onOpenReliability: () -> Unit) {
             confirmButton = {
                 Column(horizontalAlignment = Alignment.End) {
                     TextButton(onClick = { answer(dose, DoseStatus.TAKEN); choosing = null }) { Text("Taken") }
-                    TextButton(onClick = { snooze(dose); choosing = null }) { Text("Snooze") }
+                    // Only a dose that's due can be snoozed. Snoozing one that isn't would just delay it.
+                    if (!dose.due.isAfter(Instant.now())) TextButton(onClick = { snooze(dose); choosing = null }) { Text("Snooze") }
                     TextButton(onClick = { answer(dose, DoseStatus.SKIPPED); choosing = null }) { Text("Skip") }
                     TextButton(onClick = { choosing = null }) { Text("Cancel") }
                 }
             },
+        )
+    }
+
+    takingEarly?.let { dose ->
+        AlertDialog(
+            onDismissRequest = { takingEarly = null },
+            title = { Text("Take ${dose.medicine.name} now?") },
+            text = { Text("It isn't due until ${dose.due.friendlyDateTime().removePrefix("Today, ")}.") },
+            confirmButton = { TextButton(onClick = { record(dose, DoseStatus.TAKEN); takingEarly = null }) { Text("Take now") } },
+            dismissButton = { TextButton(onClick = { takingEarly = null }) { Text("Cancel") } },
         )
     }
 
@@ -320,13 +354,16 @@ private fun TimeHeading(text: String, modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun Hero(model: TodayModel?, items: List<CounterItem>) {
-    CounterScene(items, Modifier.fillMaxWidth().height(206.dp).background(MaterialTheme.colorScheme.surfaceContainerLow), dark = MaterialTheme.colorScheme.background == Ink) {
-        Column(Modifier.padding(start = 24.dp, top = 32.dp)) {
+private fun Hero(model: TodayModel?, items: List<CounterItem>, compact: Boolean) {
+    // Sideways or on a short screen the counter would take up most of the view, so it's left out.
+    val shownItems = if (compact) emptyList() else items
+    val height = if (compact) 128.dp else 206.dp
+    CounterScene(shownItems, Modifier.fillMaxWidth().height(height).background(MaterialTheme.colorScheme.surfaceContainerLow), dark = MaterialTheme.colorScheme.background == Ink) {
+        Column(Modifier.padding(start = 24.dp, top = if (compact) 16.dp else 32.dp)) {
             Text(LocalDate.now().format(heroDate), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text("Today", style = MaterialTheme.typography.headlineLarge)
             if (model != null && model.scheduledCount > 0) {
-                Spacer(Modifier.height(18.dp))
+                Spacer(Modifier.height(if (compact) 10.dp else 18.dp))
                 val fraction by animateFloatAsState(
                     model.takenCount.toFloat() / model.scheduledCount,
                     spring(dampingRatio = 0.7f, stiffness = Spring.StiffnessLow),
@@ -374,7 +411,7 @@ private fun LateCard(dose: TodayDose, onTaken: () -> Unit, onSnooze: () -> Unit,
                 Text(dose.medicine.displayName, style = MaterialTheme.typography.titleMedium)
                 Text(
                     listOfNotNull(dose.profile?.name, "due ${dose.due.friendlyDateTime().removePrefix("Today, ")}").joinToString(", ") +
-                        (dose.snoozedUntil?.let { ", snoozed to ${it.localTime()}" } ?: ""),
+                        (dose.snoozedUntil?.let { ", rings again at ${it.localTime()}" } ?: ""),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -389,24 +426,19 @@ private fun LateCard(dose: TodayDose, onTaken: () -> Unit, onSnooze: () -> Unit,
 }
 
 /**
- * A scheduled dose. The medicine's current dose can be swiped right for Taken or left for
- * Snooze; letting go before the halfway point springs it back with nothing done.
+ * A dose that isn't due yet. The medicine's current dose can be swiped right for Taken; letting go
+ * before the threshold springs it back with nothing done. Due doses move up to the Late cards,
+ * which have Snooze. There's no snooze swipe here, since snoozing a dose that isn't due would only
+ * delay it.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun DoseRow(dose: TodayDose, haptics: Haptics, onCircle: () -> Unit, onSnooze: () -> Unit, onClick: () -> Unit) {
+private fun DoseRow(dose: TodayDose, haptics: Haptics, onCircle: () -> Unit, onClick: () -> Unit) {
     val currentDose by rememberUpdatedState(dose)
     val taken by rememberUpdatedState(onCircle)
-    val snoozed by rememberUpdatedState(onSnooze)
     val state = rememberSwipeToDismissBoxState(
         confirmValueChange = { value ->
-            if (currentDose.actionable) {
-                when (value) {
-                    SwipeToDismissBoxValue.StartToEnd -> taken()
-                    SwipeToDismissBoxValue.EndToStart -> snoozed()
-                    SwipeToDismissBoxValue.Settled -> Unit
-                }
-            }
+            if (currentDose.actionable && value == SwipeToDismissBoxValue.StartToEnd) taken()
             false
         },
         positionalThreshold = { it * 0.4f },
@@ -418,7 +450,7 @@ private fun DoseRow(dose: TodayDose, haptics: Haptics, onCircle: () -> Unit, onS
     SwipeToDismissBox(
         state = state,
         enableDismissFromStartToEnd = dose.actionable,
-        enableDismissFromEndToStart = dose.actionable,
+        enableDismissFromEndToStart = false,
         backgroundContent = { SwipeBackground(state) },
     ) {
         DoseRowContent(dose, onCircle, onClick)
@@ -484,7 +516,7 @@ private fun DoseRowContent(dose: TodayDose, onCircle: () -> Unit, onClick: () ->
                     DoseStatus.SKIPPED -> "$time, skipped"
                     DoseStatus.MISSED -> "$time, missed"
                     null -> listOfNotNull(time, dose.profile?.name, dose.medicine.medForm.label.lowercase()).joinToString(", ") +
-                        (dose.snoozedUntil?.let { ", snoozed to ${it.localTime()}" } ?: "")
+                        (dose.snoozedUntil?.let { ", rings again at ${it.localTime()}" } ?: "")
                 }
                 Text(sub, style = MaterialTheme.typography.bodySmall, color = if (dose.status == DoseStatus.MISSED) Overdue else scheme.onSurfaceVariant)
             }
