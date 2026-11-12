@@ -146,23 +146,29 @@ fun TodayScreen(onAddMedicine: () -> Unit, onOpenReliability: () -> Unit) {
         scope.launch { app.engine.undo(dose.medicine.id, dose.due.toEpochMilli()) }
     }
 
+    // Sideways or on a short screen there's room for little more than a row, so the header shrinks
+    // and the add button moves into it instead of floating over the list.
+    val compact = LocalConfiguration.current.screenHeightDp < 480
     Scaffold(
         snackbarHost = { SnackbarHost(snackbar) },
         floatingActionButton = {
-            FloatingActionButton(onClick = onAddMedicine, shape = CircleShape, containerColor = MaterialTheme.colorScheme.primary) {
-                Icon(Icons.Filled.Add, "Add medicine")
+            if (!compact) {
+                FloatingActionButton(onClick = onAddMedicine, shape = CircleShape, containerColor = MaterialTheme.colorScheme.primary) {
+                    Icon(Icons.Filled.Add, "Add medicine")
+                }
             }
         },
     ) { padding ->
         LazyColumn(
             Modifier.fillMaxSize().padding(padding),
-            contentPadding = PaddingValues(bottom = 96.dp),
+            contentPadding = PaddingValues(bottom = if (compact) 16.dp else 96.dp),
         ) {
             item(key = "hero") {
                 Hero(
                     model,
                     items = model?.remaining.orEmpty().map { CounterItem(it.id, Bottle.of(it.medForm)) },
-                    compact = LocalConfiguration.current.screenHeightDp < 480,
+                    compact = compact,
+                    onAdd = onAddMedicine,
                 )
             }
             if (!canRing) {
@@ -354,16 +360,17 @@ private fun TimeHeading(text: String, modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun Hero(model: TodayModel?, items: List<CounterItem>, compact: Boolean) {
-    // Sideways or on a short screen the counter would take up most of the view, so it's left out.
-    val shownItems = if (compact) emptyList() else items
-    val height = if (compact) 128.dp else 206.dp
-    CounterScene(shownItems, Modifier.fillMaxWidth().height(height).background(MaterialTheme.colorScheme.surfaceContainerLow), dark = MaterialTheme.colorScheme.background == Ink) {
-        Column(Modifier.padding(start = 24.dp, top = if (compact) 16.dp else 32.dp)) {
+private fun Hero(model: TodayModel?, items: List<CounterItem>, compact: Boolean, onAdd: () -> Unit) {
+    if (compact) {
+        CompactHero(model, onAdd)
+        return
+    }
+    CounterScene(items, Modifier.fillMaxWidth().height(206.dp).background(MaterialTheme.colorScheme.surfaceContainerLow), dark = MaterialTheme.colorScheme.background == Ink) {
+        Column(Modifier.padding(start = 24.dp, top = 32.dp)) {
             Text(LocalDate.now().format(heroDate), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text("Today", style = MaterialTheme.typography.headlineLarge)
             if (model != null && model.scheduledCount > 0) {
-                Spacer(Modifier.height(if (compact) 10.dp else 18.dp))
+                Spacer(Modifier.height(18.dp))
                 val fraction by animateFloatAsState(
                     model.takenCount.toFloat() / model.scheduledCount,
                     spring(dampingRatio = 0.7f, stiffness = Spring.StiffnessLow),
@@ -391,6 +398,27 @@ private fun Hero(model: TodayModel?, items: List<CounterItem>, compact: Boolean)
                 }
             }
         }
+    }
+}
+
+/** One line for a short screen: Today, the count, and the add button. No counter art. */
+@Composable
+private fun CompactHero(model: TodayModel?, onAdd: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceContainerLow).padding(start = 24.dp, end = 12.dp, top = 8.dp, bottom = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text("Today", style = MaterialTheme.typography.titleLarge)
+        Spacer(Modifier.width(12.dp))
+        Text(
+            LocalDate.now().format(heroDate) + (model?.takeIf { it.scheduledCount > 0 }?.let { m ->
+                if (m.takenCount == m.scheduledCount) " · All taken" else " · ${m.takenCount} of ${m.scheduledCount} taken"
+            } ?: ""),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f),
+        )
+        androidx.compose.material3.FilledIconButton(onClick = onAdd) { Icon(Icons.Filled.Add, "Add medicine") }
     }
 }
 

@@ -123,7 +123,9 @@ class ReminderEngine(
         val updated = med?.used(change)
         db.withTransaction {
             if (status == null) db.doseLogs().delete(entry)
-            else db.doseLogs().update(entry.copy(status = status.name, actionAt = if (nowTaken) entry.dueAt ?: entry.actionAt else entry.actionAt))
+            // Marked taken afterwards: the due time is the best guess at when, but never a time
+            // that hasn't happened yet, which would put a false time in the doctor report.
+            else db.doseLogs().update(entry.copy(status = status.name, actionAt = if (nowTaken) minOf(entry.dueAt ?: entry.actionAt, System.currentTimeMillis()) else entry.actionAt))
             if (updated != null && updated != med) db.medicines().update(updated)
         }
         updated?.let { checkSupply(it) }
@@ -252,8 +254,10 @@ class ReminderEngine(
         val schedule = runCatching { med.parsedSchedule }.getOrNull() ?: return
         val outlook = Supply.outlook(schedule, left, med.perDose, med.nextDueAt?.let(Instant::ofEpochMilli), Instant.now(), zone)
         when {
-            outlook.low && !med.lowSupplyNotified -> {
-                if (notify) notifier.showLowSupply(med, outlook, db.profiles().get(med.profileId))
+            // Only a notice that was actually shown counts. Setting a count that's already low (in the
+            // editor) leaves it to the next dose to send, instead of quietly using up the one notice.
+            outlook.low && !med.lowSupplyNotified && notify -> {
+                notifier.showLowSupply(med, outlook, db.profiles().get(med.profileId))
                 db.medicines().update(med.copy(lowSupplyNotified = true))
             }
             !outlook.low && med.lowSupplyNotified -> {

@@ -35,7 +35,10 @@ class Notifier(private val context: Context) {
         val status = NotificationChannel(CHANNEL_STATUS, context.getString(R.string.channel_status), NotificationManager.IMPORTANCE_LOW).apply {
             description = context.getString(R.string.channel_status_desc)
         }
-        manager.createNotificationChannels(listOf(alarms, status))
+        val refills = NotificationChannel(CHANNEL_REFILLS, "Refill reminders", NotificationManager.IMPORTANCE_DEFAULT).apply {
+            description = "When a medicine is about a week from running out"
+        }
+        manager.createNotificationChannels(listOf(alarms, status, refills))
     }
 
     private fun alarmChannel(id: String, name: String, sound: Uri?) =
@@ -136,7 +139,7 @@ class Notifier(private val context: Context) {
         manager.notify(TEST_NOTIFICATION_ID, notification)
     }
 
-    fun showStatus(id: Int, title: String, text: String) {
+    fun showStatus(id: Int, title: String, text: String, channel: String = CHANNEL_STATUS) {
         if (!hasPostPermission()) return
         val open = PendingIntent.getActivity(
             context, id, Intent(context, app.dosekeeper.ui.MainActivity::class.java),
@@ -144,7 +147,7 @@ class Notifier(private val context: Context) {
         )
         manager.notify(
             id,
-            NotificationCompat.Builder(context, CHANNEL_STATUS)
+            NotificationCompat.Builder(context, channel)
                 .setSmallIcon(R.drawable.ic_notification)
                 .setContentTitle(title)
                 .setContentText(text)
@@ -164,7 +167,7 @@ class Notifier(private val context: Context) {
             else -> "$left left, about $days days' worth."
         }
         val who = profile?.name?.let { " ($it)" } ?: ""
-        showStatus(lowSupplyId(medicine.id), "Time to refill ${medicine.name}$who", "$text Order a refill soon.")
+        showStatus(lowSupplyId(medicine.id), "Time to refill ${medicine.name}$who", "$text Order a refill soon.", CHANNEL_REFILLS)
     }
 
     fun cancelLowSupply(medicineId: Long) = manager.cancel(lowSupplyId(medicineId))
@@ -189,6 +192,7 @@ class Notifier(private val context: Context) {
     companion object {
         const val CHANNEL_ALARMS = "dose_alarms"
         const val CHANNEL_STATUS = "status"
+        const val CHANNEL_REFILLS = "refills"
         const val TEST_NOTIFICATION_ID = 999_999
         const val BACKUP_NOTIFICATION_ID = 999_998
 
