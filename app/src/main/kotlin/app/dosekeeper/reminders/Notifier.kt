@@ -177,7 +177,10 @@ class Notifier(private val context: Context) {
     /** Medicines whose alarm is ringing right now (shown and not yet answered), oldest first. */
     fun ringingDoseIds(): List<Long> =
         runCatching { manager.activeNotifications.toList() }.getOrDefault(emptyList())
+            // Android adds its own summary notification once an app shows several, on the same
+            // channel; that one isn't a dose, so only real per-medicine alarms are counted.
             .filter { it.notification.channelId?.startsWith(CHANNEL_ALARMS) == true && it.id != TEST_NOTIFICATION_ID }
+            .filter { it.notification.flags and android.app.Notification.FLAG_GROUP_SUMMARY == 0 && it.id in 1 until BACKUP_NOTIFICATION_ID }
             .sortedBy { it.postTime }
             .map { it.id.toLong() }
     fun cancelTest() = manager.cancel(TEST_NOTIFICATION_ID)
