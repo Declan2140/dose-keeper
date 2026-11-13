@@ -104,7 +104,10 @@ private fun MedicineRow(med: Medicine, profile: app.dosekeeper.data.Profile?, on
                 Text(med.displayName, style = MaterialTheme.typography.titleMedium, color = if (dim) scheme.onSurfaceVariant else scheme.onSurface)
                 Text(runCatching { med.parsedSchedule.describe() }.getOrDefault(""), style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant)
                 val status = when (med.medStatus) {
-                    MedStatus.ACTIVE -> med.nextDueAt?.let { "Next ${java.time.Instant.ofEpochMilli(it).friendlyDateTime()}" }
+                    MedStatus.ACTIVE -> med.nextDueAt?.let {
+                        val due = java.time.Instant.ofEpochMilli(it)
+                        (if (due.isAfter(java.time.Instant.now())) "Next " else "Due since ") + due.friendlyDateTime()
+                    }
                     MedStatus.PAUSED -> "Paused"
                     MedStatus.ARCHIVED -> "Archived"
                 }

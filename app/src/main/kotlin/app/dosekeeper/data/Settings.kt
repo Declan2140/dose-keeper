@@ -57,6 +57,11 @@ class Settings(context: Context) {
         get() = prefs.getString("lastAutoBackupError", null)
         set(value) = edit { putString("lastAutoBackupError", value) }
 
+    /** The time zone the doses were last worked out in, to notice when the phone has moved. */
+    var lastZone: String?
+        get() = prefs.getString("lastZone", null)
+        set(value) = edit { putString("lastZone", value) }
+
     companion object {
         const val FILE = "settings"
     }

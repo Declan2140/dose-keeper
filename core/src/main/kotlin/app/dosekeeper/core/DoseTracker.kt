@@ -23,8 +23,16 @@ data class TrackerState(
     val nextDue: Instant?,
     val snoozedUntil: Instant? = null,
 ) {
-    /** When the alarm for this medicine should go off next, or null for none. */
-    val alarmAt: Instant? get() = snoozedUntil ?: nextDue
+    /**
+     * When the alarm for this medicine should go off next, or null for none. A snooze never
+     * brings the alarm earlier than the dose itself.
+     */
+    val alarmAt: Instant?
+        get() = when {
+            nextDue == null -> snoozedUntil
+            snoozedUntil == null -> nextDue
+            else -> maxOf(snoozedUntil, nextDue)
+        }
 }
 
 /**
@@ -127,9 +135,27 @@ object DoseTracker {
         return current to missed
     }
 
-    /** Snooze the current dose. Also used to keep re-alerting when an alarm goes unanswered. */
-    fun snooze(state: TrackerState, now: Instant, minutes: Int): TrackerState =
-        state.copy(snoozedUntil = DoseCalculator.snoozeUntil(now, minutes))
+    /**
+     * Snooze the current dose. Also used to keep re-alerting when an alarm goes unanswered.
+     * A dose that isn't due yet is snoozed from its due time, never pulled earlier.
+     */
+    fun snooze(state: TrackerState, now: Instant, minutes: Int): TrackerState {
+        val from = state.nextDue?.takeIf { it.isAfter(now) } ?: now
+        return state.copy(snoozedUntil = DoseCalculator.snoozeUntil(from, minutes))
+    }
+
+    /**
+     * The phone moved to another time zone. Fixed doses are local clock times, so the last dose
+     * dealt with keeps its clock time: a dose taken at 8:00 in Chicago counts as the 8:00 dose in
+     * Los Angeles too, instead of the 8:00 dose there coming back as not taken.
+     * Interval schedules are exact moments and are left alone.
+     */
+    fun zoneChanged(schedule: Schedule, state: TrackerState, from: ZoneId, to: ZoneId): TrackerState {
+        if (schedule !is Schedule.FixedTimes || from == to) return recompute(schedule, state, to)
+        val anchor = state.anchor ?: return recompute(schedule, state, to)
+        val moved = anchor.atZone(from).toLocalDateTime().atZone(to).toInstant()
+        return recompute(schedule, state.copy(anchor = moved, snoozedUntil = null), to)
+    }
 
     /**
      * An alarm went off. Returns the state with a follow-up alert set, so the reminder keeps
@@ -137,8 +163,9 @@ object DoseTracker {
      * was stale (e.g. the dose was already answered), in which case nothing should be shown.
      */
     fun alarmFired(state: TrackerState, now: Instant, repeatMinutes: Int): Fired {
-        val due = state.nextDue ?: return Fired(state, isDue = false)
-        if (now.isBefore(due)) return Fired(state, isDue = false)
+        val due = state.nextDue ?: return Fired(state.copy(snoozedUntil = null), isDue = false)
+        // Stale or early: drop any snooze that has already passed, so the alarm isn't set in the past.
+        if (now.isBefore(due)) return Fired(state.copy(snoozedUntil = state.snoozedUntil?.takeIf { it.isAfter(now) }), isDue = false)
         return Fired(snooze(state, now, repeatMinutes), isDue = true)
     }
 
