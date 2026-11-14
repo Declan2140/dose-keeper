@@ -27,10 +27,21 @@ class ReminderEngine(
     private val notifier: Notifier,
 ) {
     private val lock = Mutex()
+
+    /** Called after anything here may have changed what's due, so the home screen widget can redraw. */
+    var onChanged: (() -> Unit)? = null
+
+    /** Runs [block] with nothing else changing doses at the same time, then reports the change. */
+    private suspend fun <T> change(block: suspend () -> T): T =
+        try {
+            lock.withLock { block() }
+        } finally {
+            onChanged?.invoke()
+        }
     private val zone: ZoneId get() = ZoneId.systemDefault()
 
     /** Saves a new or edited medicine and sets its alarm. Returns its id. */
-    suspend fun save(medicine: Medicine, scheduleChanged: Boolean): Long = lock.withLock {
+    suspend fun save(medicine: Medicine, scheduleChanged: Boolean): Long = change {
         val now = Instant.now()
         val existing = if (medicine.id != 0L) db.medicines().get(medicine.id) else null
         var med = medicine
@@ -47,10 +58,16 @@ class ReminderEngine(
         id
     }
 
-    suspend fun answer(medicineId: Long, status: DoseStatus) = lock.withLock {
+    /**
+     * Records the medicine's current dose as taken or skipped. [onlyIfDueAt] makes it do nothing
+     * unless that is still the current dose: the widget passes the dose it was showing, so a
+     * second tap, or a tap on a widget that hasn't caught up yet, can never answer the next dose.
+     */
+    suspend fun answer(medicineId: Long, status: DoseStatus, onlyIfDueAt: Long? = null) = change {
+        if (onlyIfDueAt != null && db.medicines().get(medicineId)?.nextDueAt != onlyIfDueAt) return@change
         adoptZoneChange()
-        val med = db.medicines().get(medicineId) ?: return@withLock
-        if (med.nextDueAt == null) return@withLock
+        val med = db.medicines().get(medicineId) ?: return@change
+        if (med.nextDueAt == null) return@change
         val now = Instant.now()
         val schedule = med.parsedSchedule
         val (caught, missed) = DoseTracker.catchUp(schedule, med.tracker, now, zone, settings.missedWindow)
@@ -74,12 +91,12 @@ class ReminderEngine(
      * Unchecks a taken or skipped dose, making it the current dose again. Only the medicine's
      * latest dose can be unchecked, so the doses after it are still worked out in order.
      */
-    suspend fun undo(medicineId: Long, dueAt: Long) = lock.withLock {
-        val med = db.medicines().get(medicineId) ?: return@withLock
-        if (!med.isActive) return@withLock
-        val log = db.doseLogs().lastScheduled(medicineId) ?: return@withLock
-        if (log.dueAt != dueAt || log.doseStatus == DoseStatus.MISSED) return@withLock
-        val schedule = runCatching { med.parsedSchedule }.getOrNull() ?: return@withLock
+    suspend fun undo(medicineId: Long, dueAt: Long) = change {
+        val med = db.medicines().get(medicineId) ?: return@change
+        if (!med.isActive) return@change
+        val log = db.doseLogs().lastScheduled(medicineId) ?: return@change
+        if (log.dueAt != dueAt || log.doseStatus == DoseStatus.MISSED) return@change
+        val schedule = runCatching { med.parsedSchedule }.getOrNull() ?: return@change
         var updated = med.withTracker(DoseTracker.undo(schedule, Instant.ofEpochMilli(dueAt), Instant.now(), settings.snoozeMinutes))
         if (log.doseStatus == DoseStatus.TAKEN) updated = updated.used(-1)
         db.withTransaction {
@@ -91,18 +108,18 @@ class ReminderEngine(
         checkSupply(updated)
     }
 
-    suspend fun snooze(medicineId: Long, minutes: Int = settings.snoozeMinutes) = lock.withLock {
+    suspend fun snooze(medicineId: Long, minutes: Int = settings.snoozeMinutes) = change {
         adoptZoneChange()
-        val med = db.medicines().get(medicineId) ?: return@withLock
-        if (med.nextDueAt == null) return@withLock
+        val med = db.medicines().get(medicineId) ?: return@change
+        if (med.nextDueAt == null) return@change
         val updated = med.withTracker(DoseTracker.snooze(med.tracker, Instant.now(), minutes))
         db.medicines().update(updated)
         notifier.cancelDose(medicineId)
         syncAlarm(updated)
     }
 
-    suspend fun logAsNeeded(medicineId: Long) = lock.withLock {
-        val med = db.medicines().get(medicineId) ?: return@withLock
+    suspend fun logAsNeeded(medicineId: Long) = change {
+        val med = db.medicines().get(medicineId) ?: return@change
         val updated = med.used(1)
         db.withTransaction {
             log(medicineId, listOf(DoseTracker.logAsNeeded(Instant.now())))
@@ -115,7 +132,7 @@ class ReminderEngine(
      * Changes a history entry's status, or deletes it when [status] is null, keeping the
      * supply count in step: a dose that becomes taken uses supply, one that stops being taken gives it back.
      */
-    suspend fun editLog(entry: DoseLog, status: DoseStatus?) = lock.withLock {
+    suspend fun editLog(entry: DoseLog, status: DoseStatus?) = change {
         val med = db.medicines().get(entry.medicineId)
         val wasTaken = entry.doseStatus == DoseStatus.TAKEN
         val nowTaken = status == DoseStatus.TAKEN
@@ -132,17 +149,17 @@ class ReminderEngine(
     }
 
     /** Adds a refill of [amount] to the supply and remembers the size for next time. */
-    suspend fun refill(medicineId: Long, amount: Double) = lock.withLock {
-        val med = db.medicines().get(medicineId) ?: return@withLock
-        if (amount <= 0) return@withLock
+    suspend fun refill(medicineId: Long, amount: Double) = change {
+        val med = db.medicines().get(medicineId) ?: return@change
+        if (amount <= 0) return@change
         val updated = med.copy(supplyLeft = (med.supplyLeft ?: 0.0) + amount, refillSize = amount)
         db.medicines().update(updated)
         checkSupply(updated)
     }
 
-    suspend fun setStatus(medicineId: Long, status: MedStatus) = lock.withLock {
-        val med = db.medicines().get(medicineId) ?: return@withLock
-        if (med.medStatus == MedStatus.ARCHIVED) return@withLock // archived medicines never come back
+    suspend fun setStatus(medicineId: Long, status: MedStatus) = change {
+        val med = db.medicines().get(medicineId) ?: return@change
+        if (med.medStatus == MedStatus.ARCHIVED) return@change // archived medicines never come back
         var updated = med.copy(status = status.name)
         if (status == MedStatus.ACTIVE && med.medStatus == MedStatus.PAUSED) {
             updated = updated.withTracker(DoseTracker.resume(med.parsedSchedule, med.tracker, Instant.now(), zone))
@@ -154,16 +171,16 @@ class ReminderEngine(
     }
 
     /** An alarm went off: log anything missed, then ring if a dose is due. */
-    suspend fun onAlarm(medicineId: Long) = lock.withLock {
+    suspend fun onAlarm(medicineId: Long) = change {
         if (medicineId == AlarmScheduler.TEST_ID) {
             notifier.showTest()
-            return@withLock
+            return@change
         }
         adoptZoneChange()
-        val med = db.medicines().get(medicineId) ?: return@withLock
+        val med = db.medicines().get(medicineId) ?: return@change
         if (!med.isActive) {
             alarms.cancel(medicineId)
-            return@withLock
+            return@change
         }
         val now = Instant.now()
         val (caught, missed) = DoseTracker.catchUp(med.parsedSchedule, med.tracker, now, zone, settings.missedWindow)
@@ -184,7 +201,7 @@ class ReminderEngine(
      * Brings every medicine up to date and re-sets every alarm. Runs at app start, after a reboot,
      * update, clock or time zone change, a restore, and from the daily watchdog.
      */
-    suspend fun refreshAll() = lock.withLock { refreshLocked() }
+    suspend fun refreshAll() = change { refreshLocked() }
 
     /**
      * If the phone has changed time zone since doses were last worked out, bring everything
@@ -224,8 +241,8 @@ class ReminderEngine(
      * The phone was just unlocked: alarms that started ringing while it was locked said only
      * "Medication reminder". Put the medicine's name on them now, without ringing again.
      */
-    suspend fun revealRinging() = lock.withLock {
-        if (!settings.hideNamesOnLockScreen || notifier.namesHidden()) return@withLock
+    suspend fun revealRinging() = change {
+        if (!settings.hideNamesOnLockScreen || notifier.namesHidden()) return@change
         for (id in notifier.ringingDoseIds()) {
             val med = db.medicines().get(id) ?: continue
             val due = med.nextDueAt ?: continue

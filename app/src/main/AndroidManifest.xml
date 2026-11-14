@@ -60,6 +60,20 @@
                 <action android:name="android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED" />
             </intent-filter>
         </receiver>
+
+        <!-- Home screen widget: the next dose and a Taken button. -->
+        <receiver
+            android:name=".widget.NextDoseWidgetReceiver"
+            android:exported="true"
+            android:label="@string/widget_name">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/next_dose_widget_info" />
+        </receiver>
+
         <!-- Shares a copy of the doctor report under its real file name. -->
         <provider
             android:name="androidx.core.content.FileProvider"

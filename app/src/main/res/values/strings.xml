@@ -5,4 +5,6 @@
     <string name="channel_alarms_desc">Loud reminders when a dose is due</string>
     <string name="channel_status">Background status</string>
     <string name="channel_status_desc">Quiet notices, such as a backup failing</string>
+    <string name="widget_name">Next dose</string>
+    <string name="widget_description">Your next dose, with a Taken button</string>
 </resources>
