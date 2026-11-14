@@ -1,20 +1,11 @@
 package app.dosekeeper.ui
 
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.MutableTransitionState
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.expandHorizontally
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkHorizontally
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -32,6 +23,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -121,15 +114,15 @@ fun CounterScene(
 }
 
 /**
- * The row of containers. A container that leaves stays drawn until its exit finishes, in the
- * place it was standing, so the gap closes smoothly instead of jumping.
+ * The row of containers, lined up from the right. Each one is placed by sliding it (never by
+ * resizing anything), so when one leaves the others glide over to close the gap. A container that
+ * leaves stays drawn where it stood until it has lifted away.
  */
 @Composable
 private fun AnimatedBottles(items: List<CounterItem>, colors: SceneColors, scale: Float, modifier: Modifier) {
+    val reduced = LocalReducedMotion.current
     val display = remember { mutableStateListOf<CounterItem>().apply { addAll(items) } }
-    val states = remember { mutableMapOf<Long, MutableTransitionState<Boolean>>() }
     val initialKeys = remember { items.map { it.key }.toSet() }
-    val currentKeys = items.map { it.key }.toSet()
 
     LaunchedEffect(items) {
         val merged = mergeKeepingDeparting(display.toList(), items)
@@ -139,35 +132,62 @@ private fun AnimatedBottles(items: List<CounterItem>, colors: SceneColors, scale
         }
     }
 
-    Row(modifier, verticalAlignment = Alignment.Bottom) {
+    val gap = 12f
+    Box(modifier) {
         for (item in display) {
             key(item.key) {
-                val state = states.getOrPut(item.key) { MutableTransitionState(item.key in initialKeys) }
-                state.targetState = item.key in currentKeys
-                if (state.isIdle && !state.currentState && item.key !in currentKeys) {
-                    LaunchedEffect(Unit) {
+                val place = items.indexOfFirst { it.key == item.key }
+                val present = place >= 0
+                // How far this one stands from the right edge: the widths of everything after it.
+                val distance = with(LocalDensity.current) {
+                    items.drop(place + 1).sumOf { ((it.bottle.widthDp + gap) * scale).toDouble() }.toFloat().dp.toPx()
+                }
+                val shift = remember { Animatable(distance) }
+                val seen = remember { Animatable(if (item.key in initialKeys) 1f else 0f) }
+                LaunchedEffect(distance, present, reduced) {
+                    if (!present) return@LaunchedEffect
+                    if (reduced) shift.snapTo(distance) else shift.animateTo(distance, Motion.glide())
+                }
+                LaunchedEffect(present, reduced) {
+                    if (present) {
+                        seen.animateTo(1f, if (reduced) Motion.fade() else spring(dampingRatio = 0.6f, stiffness = Spring.StiffnessMediumLow))
+                    } else {
+                        seen.animateTo(0f, if (reduced) Motion.fade() else Motion.smooth())
                         display.removeAll { it.key == item.key }
-                        states.remove(item.key)
                     }
                 }
-                AnimatedVisibility(
-                    visibleState = state,
-                    enter = expandHorizontally(spring(stiffness = Spring.StiffnessMediumLow), expandFrom = Alignment.End, clip = false) +
-                        slideInVertically(spring(dampingRatio = 0.6f, stiffness = Spring.StiffnessMediumLow)) { -it / 3 } +
-                        fadeIn(tween(250)),
-                    exit = slideOutVertically(tween(380)) { -it / 2 } +
-                        fadeOut(tween(320)) +
-                        shrinkHorizontally(tween(320, delayMillis = 260), shrinkTowards = Alignment.End, clip = false),
+                Canvas(
+                    Modifier.align(Alignment.BottomEnd)
+                        .size(item.bottle.widthDp.dp * scale, item.bottle.heightDp.dp * scale)
+                        .graphicsLayer {
+                            translationX = -shift.value
+                            alpha = seen.value.coerceIn(0f, 1f)
+                            // Arriving drops in from a little above; leaving lifts off further.
+                            if (!reduced) translationY = -(1f - seen.value) * size.height * (if (present) 0.33f else 0.5f)
+                        },
                 ) {
-                    Canvas(
-                        Modifier.padding(start = 12.dp * scale)
-                            .size(item.bottle.widthDp.dp * scale, item.bottle.heightDp.dp * scale),
-                    ) {
-                        drawBottle(item.bottle, 1.dp.toPx() * scale, colors)
-                    }
+                    drawBottle(item.bottle, 1.dp.toPx() * scale, colors)
                 }
             }
         }
+    }
+}
+
+/**
+ * A small copy of a medicine's container, for a list row whose medicine has no pill picture
+ * (liquids, drops, inhalers and creams). Decoration only: the name beside it says what it is.
+ */
+@Composable
+fun BottleGlyph(bottle: Bottle, modifier: Modifier = Modifier, height: Dp = 30.dp, dimmed: Boolean = false) {
+    val dark = MaterialTheme.colorScheme.background == Ink
+    val base = if (dark) darkScene else lightScene
+    val outline = (if (dark) Color(0xFF9AA1AB) else Color(0xFF6B7280)).let { if (dimmed) it.copy(alpha = 0.7f) else it }
+    val colors = remember(dark, dimmed) {
+        SceneColors(tile = base.tile, counter = base.counter, counterEdge = base.counterEdge, bottle = base.bottle, outline = outline, label = base.label, ridge = base.ridge)
+    }
+    val scale = height.value / bottle.heightDp
+    Canvas(modifier.size(bottle.widthDp.dp * scale, height)) {
+        drawBottle(bottle, 1.dp.toPx() * scale, colors, minLine = 1.25.dp.toPx())
     }
 }
 
@@ -199,8 +219,8 @@ private fun DrawScope.drawTiles(colors: SceneColors, tile: Float, bottom: Float)
 }
 
 /** Draws one container with its top-left at the origin, in dp units multiplied by [u]. */
-private fun DrawScope.drawBottle(bottle: Bottle, u: Float, c: SceneColors) {
-    val line = Stroke(width = 1.5f * u.coerceAtMost(1.dp.toPx() * 1.4f), join = StrokeJoin.Round)
+private fun DrawScope.drawBottle(bottle: Bottle, u: Float, c: SceneColors, minLine: Float = 0f) {
+    val line = Stroke(width = (1.5f * u.coerceAtMost(1.dp.toPx() * 1.4f)).coerceAtLeast(minLine), join = StrokeJoin.Round)
 
     fun shape(x: Float, y: Float, w: Float, h: Float, r: Float, fill: Color = c.bottle) {
         val tl = Offset(x * u, y * u)

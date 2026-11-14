@@ -78,6 +78,23 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.animation.ContentTransform
+import androidx.compose.animation.core.FastOutLinearInEasing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.VisibilityThreshold
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.lazy.LazyItemScope
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.LayoutDirection
+import app.dosekeeper.data.Medicine
+import kotlinx.coroutines.coroutineScope
+import kotlin.math.abs
 import app.dosekeeper.app
 import app.dosekeeper.core.DoseStatus
 import app.dosekeeper.core.Supply
@@ -118,15 +135,55 @@ fun TodayScreen(onAddMedicine: () -> Unit, onOpenReliability: () -> Unit) {
         }
     }
 
-    val meds = medicines
-    val model = remember(meds, profiles, logs, profileFilter, now) {
-        meds?.let { buildToday(it, profiles, logs, profileFilter, Instant.ofEpochMilli(now)) }
+    // The day on show, counted from today: -1 is yesterday. [day] is the one that was asked for;
+    // [shownDay] follows once the old day's rows have slid away.
+    val reduced = LocalReducedMotion.current
+    var day by rememberSaveable { mutableIntStateOf(0) }
+    var shownDay by rememberSaveable { mutableIntStateOf(0) }
+    val motion = remember { ListMotion(entered = entrancePlayed) }
+    val today = remember(now) { Instant.ofEpochMilli(now).localDate() }
+
+    // Once per app open, the header fades in and the rows rise into place one after another.
+    LaunchedEffect(Unit) {
+        if (entrancePlayed) return@LaunchedEffect
+        entrancePlayed = true
+        motion.entrance.animateTo(1f, tween(if (reduced) Motion.FADE_MS else ListMotion.ENTRANCE_MS.toInt(), easing = LinearEasing))
     }
+    // A later day comes in from the right and an earlier one from the left, like turning to it on
+    // a calendar. Asking for another day partway through carries on from wherever the rows are.
+    LaunchedEffect(day) {
+        if (day != shownDay) {
+            val forward = if (day > shownDay) 1f else -1f
+            coroutineScope {
+                launch { motion.alpha.animateTo(0f, tween(if (reduced) Motion.FADE_MS else 110)) }
+                if (!reduced) motion.slide.animateTo(-forward * 0.25f, tween(110, easing = FastOutLinearInEasing))
+            }
+            shownDay = day
+            motion.slide.snapTo(if (reduced) 0f else forward * 0.6f)
+        }
+        coroutineScope {
+            launch { motion.alpha.animateTo(1f, tween(if (reduced) Motion.FADE_MS else 160)) }
+            motion.slide.animateTo(0f, Motion.smooth())
+        }
+    }
+
+    val meds = medicines
+    val model = remember(meds, profiles, logs, profileFilter, now, shownDay) {
+        meds?.let {
+            val at = Instant.ofEpochMilli(now)
+            if (shownDay == 0) buildToday(it, profiles, logs, profileFilter, at)
+            else buildDay(it, profiles, logs, profileFilter, at.localDate().plusDays(shownDay.toLong()), at)
+        }
+    }
+    val onToday = shownDay == 0
+    // With one person every row would show the same initial, so the medicine's picture leads instead.
+    val showPerson = profiles.size > 1
     val canRing = remember(now) { app.alarms.canScheduleExact() && app.notifier.notificationsAllowed() }
 
     val haptics = rememberHaptics()
     fun record(dose: TodayDose, status: DoseStatus) {
-        if (status == DoseStatus.TAKEN) haptics.taken() else haptics.soft()
+        // The Taken buzz is held for a moment so it's felt just as the tick lands.
+        if (status == DoseStatus.TAKEN) scope.launch { delay(Motion.TICK_LANDS_MS); haptics.taken() } else haptics.soft()
         scope.launch {
             app.engine.answer(dose.medicine.id, status)
             // Every answer can be taken back for a few seconds, in case of a slip of the thumb.
@@ -167,19 +224,45 @@ fun TodayScreen(onAddMedicine: () -> Unit, onOpenReliability: () -> Unit) {
             Modifier.fillMaxSize().padding(padding),
             contentPadding = PaddingValues(bottom = if (compact) 16.dp else 96.dp),
         ) {
+            // Rows that belong to the day on show. They rise in as the app opens, slide when the
+            // day changes, and glide to their new place when a dose is answered.
+            var slot = 1
+            fun dayItem(key: Any, content: @Composable () -> Unit) {
+                val index = slot++
+                item(key = key) { Box(moving(reduced).listMotion(motion, index, reduced)) { content() } }
+            }
+            // A heading can come round twice in one day (a 2 AM dose and a 10 PM dose are both
+            // "Bedtime"), and every row in a list needs a key of its own.
+            val headings = mutableMapOf<String, Int>()
+            fun headingKey(part: String): String {
+                val nth = (headings[part] ?: 0) + 1
+                headings[part] = nth
+                return "part-$part-$nth"
+            }
+
             item(key = "hero") {
                 Hero(
                     model,
                     items = model?.remaining.orEmpty().map { CounterItem(it.id, Bottle.of(it.medForm)) },
                     compact = compact,
                     onAdd = onAddMedicine,
+                    date = today.plusDays(shownDay.toLong()),
+                    dayOffset = shownDay,
+                    motion = motion,
+                    onShift = { by -> day = (day + by).coerceIn(-DAYS_EACH_WAY, DAYS_EACH_WAY) },
                 )
             }
-            if (!canRing) {
-                item(key = "warn") {
+            item(key = "days") {
+                Column(Modifier.listMotion(motion, 0, reduced, changesWithDay = false)) {
+                    DayStrip(today, selected = day, onSelect = { day = it })
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                }
+            }
+            if (!canRing && onToday) {
+                dayItem("warn") {
                     Row(
-                        Modifier.animateItem().padding(start = 24.dp, end = 24.dp, top = 16.dp).fillMaxWidth()
-                            .background(MaterialTheme.colorScheme.errorContainer, RoundedCornerShape(16.dp))
+                        Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp).fillMaxWidth()
+                            .background(MaterialTheme.colorScheme.errorContainer, CardShape)
                             .padding(start = 16.dp, top = 8.dp, bottom = 8.dp, end = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
@@ -188,12 +271,12 @@ fun TodayScreen(onAddMedicine: () -> Unit, onOpenReliability: () -> Unit) {
                     }
                 }
             }
-            val low = meds.orEmpty()
-                .filter { it.isActive && it.tracksSupply && (profileFilter == null || it.profileId == profileFilter) }
-                .mapNotNull { med -> med.supplyOutlook(Instant.ofEpochMilli(now))?.takeIf { it.low }?.let { med to it } }
-            low.forEach { (med, outlook) ->
-                item(key = "low-${med.id}") {
-                    LowSupplyCard(med, outlook, Modifier.animateItem(), onRefilled = { refilling = med })
+            if (onToday) {
+                val low = meds.orEmpty()
+                    .filter { it.isActive && it.tracksSupply && (profileFilter == null || it.profileId == profileFilter) }
+                    .mapNotNull { med -> med.supplyOutlook(Instant.ofEpochMilli(now))?.takeIf { it.low }?.let { med to it } }
+                low.forEach { (med, outlook) ->
+                    dayItem("low-${med.id}") { LowSupplyCard(med, outlook, onRefilled = { refilling = med }) }
                 }
             }
             if (profiles.size > 1) {
@@ -203,38 +286,68 @@ fun TodayScreen(onAddMedicine: () -> Unit, onOpenReliability: () -> Unit) {
                         selected = profileFilter,
                         label = { id -> profiles.firstOrNull { it.id == id }?.name ?: "Everyone" },
                         onSelect = { profileFilter = it },
-                        modifier = Modifier.animateItem().padding(start = 24.dp, end = 24.dp, top = 16.dp),
+                        modifier = moving(reduced).listMotion(motion, 0, reduced, changesWithDay = false).padding(start = 16.dp, end = 16.dp, top = 16.dp),
                     )
                 }
             }
             if (model == null) return@LazyColumn
 
-            if (model.doses.isEmpty() && model.asNeeded.isEmpty()) {
-                item(key = "empty") {
+            if (model.doses.isEmpty() && model.asNeeded.isEmpty() && model.timed.isEmpty()) {
+                dayItem("empty") {
                     Text(
-                        if (meds.isNullOrEmpty()) "No medicines yet. Tap + to add your first one."
-                        else "Nothing due today.",
-                        color = Muted,
-                        modifier = Modifier.animateItem().padding(horizontal = 24.dp, vertical = 32.dp),
+                        when {
+                            meds.isNullOrEmpty() -> "No medicines yet. Tap + to add your first one."
+                            shownDay < 0 -> "Nothing was recorded on this day."
+                            shownDay > 0 -> "Nothing is scheduled for this day."
+                            else -> "Nothing due today."
+                        },
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 24.dp, vertical = 32.dp),
                     )
                 }
+            }
+
+            if (!onToday) {
+                // Another day is for looking at: what was taken, or what's coming. Changes are made on Today.
+                dayItem("note-${shownDay.compareTo(0)}") {
+                    Text(
+                        if (shownDay < 0) "Looking back. Doses are marked on Today." else "A preview of what's scheduled.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(start = 24.dp, end = 24.dp, top = 16.dp),
+                    )
+                }
+                var lastPart: String? = null
+                for (dose in model.doses) {
+                    val part = dose.due.partOfDay()
+                    if (part != lastPart) {
+                        lastPart = part
+                        dayItem(headingKey(part)) { TimeHeading(part) }
+                    }
+                    dayItem(dose.key) { DoseRow(dose, haptics, showPerson, preview = true, onCircle = {}, onClick = {}) }
+                }
+                if (model.timed.isNotEmpty()) {
+                    dayItem("timed-h") { TimeHeading("On a timer") }
+                    model.timed.forEach { (med, profile) ->
+                        dayItem("timed-${med.id}") { TimedRow(med, profile, showPerson) }
+                    }
+                }
+                return@LazyColumn
             }
 
             // Every dose keeps one key wherever it sits, so taking it glides it down to Done.
             val late = model.doses.filter { it.overdue }
             if (late.isNotEmpty()) {
-                item(key = "late-h") {
-                    Row(Modifier.animateItem().padding(start = 24.dp, top = 24.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Box(Modifier.size(8.dp).background(Overdue, CircleShape))
+                dayItem("late-h") {
+                    Row(Modifier.padding(start = 24.dp, top = 28.dp, bottom = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.size(8.dp).background(MaterialTheme.colorScheme.error, CircleShape))
                         Spacer(Modifier.width(8.dp))
-                        Text("Late", style = MaterialTheme.typography.labelMedium, color = Overdue)
+                        Text("Late", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.error)
                     }
                 }
                 late.forEach { dose ->
-                    item(key = dose.key) {
-                        Box(Modifier.animateItem()) {
-                            LateCard(dose, onTaken = { answer(dose, DoseStatus.TAKEN) }, onSnooze = { snooze(dose) }, onSkip = { answer(dose, DoseStatus.SKIPPED) })
-                        }
+                    dayItem(dose.key) {
+                        LateCard(dose, showPerson, onTaken = { answer(dose, DoseStatus.TAKEN) }, onSnooze = { snooze(dose) }, onSkip = { answer(dose, DoseStatus.SKIPPED) })
                     }
                 }
             }
@@ -245,40 +358,28 @@ fun TodayScreen(onAddMedicine: () -> Unit, onOpenReliability: () -> Unit) {
                 val part = dose.due.partOfDayHeading()
                 if (part != lastPart) {
                     lastPart = part
-                    item(key = "part-$part") { TimeHeading(part, Modifier.animateItem()) }
+                    dayItem(headingKey(part)) { TimeHeading(part) }
                 }
-                item(key = dose.key) {
-                    Box(Modifier.animateItem()) {
-                        DoseRow(
-                            dose, haptics,
-                            onCircle = { answer(dose, DoseStatus.TAKEN) },
-                            onClick = { choosing = dose },
-                        )
-                    }
+                dayItem(dose.key) {
+                    DoseRow(dose, haptics, showPerson, onCircle = { answer(dose, DoseStatus.TAKEN) }, onClick = { choosing = dose })
                 }
             }
             val done = rest.filter { it.status != null }.sortedBy { it.due }
             if (done.isNotEmpty()) {
-                item(key = "done-h") { TimeHeading("Done", Modifier.animateItem()) }
+                dayItem("done-h") { TimeHeading("Done") }
                 for (dose in done) {
-                    item(key = dose.key) {
-                        Box(Modifier.animateItem()) {
-                            DoseRow(dose, haptics, onCircle = { undo(dose) }, onClick = { unchecking = dose })
-                        }
-                    }
+                    dayItem(dose.key) { DoseRow(dose, haptics, showPerson, onCircle = { undo(dose) }, onClick = { unchecking = dose }) }
                 }
             }
 
             if (model.asNeeded.isNotEmpty()) {
-                item(key = "an-h") { TimeHeading("As needed", Modifier.animateItem()) }
+                dayItem("an-h") { TimeHeading("As needed") }
                 model.asNeeded.forEach { row ->
-                    item(key = "an-${row.medicine.id}") {
-                        Box(Modifier.animateItem()) {
-                            AsNeededRowView(row, onLog = {
-                                haptics.taken()
-                                scope.launch { app.engine.logAsNeeded(row.medicine.id) }
-                            })
-                        }
+                    dayItem("an-${row.medicine.id}") {
+                        AsNeededRowView(row, showPerson, onLog = {
+                            scope.launch { delay(Motion.TICK_LANDS_MS); haptics.taken() }
+                            scope.launch { app.engine.logAsNeeded(row.medicine.id) }
+                        })
                     }
                 }
             }
@@ -342,15 +443,51 @@ fun TodayScreen(onAddMedicine: () -> Unit, onOpenReliability: () -> Unit) {
 /** One key per dose, the same whether it is late, open or done. */
 private val TodayDose.key: String get() = "dose-${medicine.id}-${due.toEpochMilli()}"
 
-/** Morning, Afternoon, Evening or Bedtime, with the day in front when it isn't today. */
+/** Set once the rows have made their entrance, so it plays once per app open and not on every return to the tab. */
+private var entrancePlayed = false
+
+/** Dose cards are fully rounded at the ends, like a pill. */
+private val CardShape = RoundedCornerShape(24.dp)
+
+/** How far a finished dose's name fades back. On the card it still passes 4.5:1 in both themes. */
+private const val DONE_NAME_ALPHA = 0.72f
+
+/**
+ * How a row arrives, leaves and moves to a new place in the list. It only ever slides and fades;
+ * with animations removed it fades and takes its new place at once.
+ */
+private fun LazyItemScope.moving(reduced: Boolean): Modifier =
+    if (reduced) Modifier.animateItem(fadeInSpec = Motion.fade(), placementSpec = null, fadeOutSpec = Motion.fade())
+    else Modifier.animateItem(placementSpec = Motion.glide(IntOffset.VisibilityThreshold))
+
+/** Morning, Afternoon, Evening or Bedtime. */
+private fun Instant.partOfDay(): String = when (atZone(java.time.ZoneId.systemDefault()).hour) {
+    in 4..11 -> "Morning"
+    in 12..16 -> "Afternoon"
+    in 17..20 -> "Evening"
+    else -> "Bedtime"
+}
+
+/** The part of the day, with the day in front when it isn't today. */
 private fun Instant.partOfDayHeading(): String {
-    val part = when (atZone(java.time.ZoneId.systemDefault()).hour) {
-        in 4..11 -> "Morning"
-        in 12..16 -> "Afternoon"
-        in 17..20 -> "Evening"
-        else -> "Bedtime"
-    }
+    val part = partOfDay()
     return if (localDate() != LocalDate.now()) "${localDate().friendly()}, ${part.lowercase()}" else part
+}
+
+/** "Today", "Yesterday", "Tomorrow", or the weekday for days further off. */
+private fun dayTitle(offset: Int, date: LocalDate): String = when (offset) {
+    0 -> "Today"
+    -1 -> "Yesterday"
+    1 -> "Tomorrow"
+    else -> date.dayOfWeek.getDisplayName(java.time.format.TextStyle.FULL, Locale.getDefault())
+}
+
+/** "2 of 5 taken" for today and past days, "5 scheduled" for a coming one. Null when the day is empty. */
+private fun TodayModel.statusLine(dayOffset: Int): String? = when {
+    scheduledCount == 0 -> null
+    dayOffset > 0 -> "$scheduledCount scheduled"
+    takenCount == scheduledCount -> "All taken"
+    else -> "$takenCount of $scheduledCount taken"
 }
 
 @Composable
@@ -359,65 +496,99 @@ private fun TimeHeading(text: String, modifier: Modifier = Modifier) {
         text,
         style = MaterialTheme.typography.labelMedium,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = modifier.padding(start = 24.dp, end = 24.dp, top = 24.dp, bottom = 2.dp),
+        modifier = modifier.padding(start = 24.dp, end = 24.dp, top = 28.dp, bottom = 5.dp),
     )
 }
 
 @Composable
-private fun Hero(model: TodayModel?, items: List<CounterItem>, compact: Boolean, onAdd: () -> Unit) {
+private fun Hero(
+    model: TodayModel?,
+    items: List<CounterItem>,
+    compact: Boolean,
+    onAdd: () -> Unit,
+    date: LocalDate,
+    dayOffset: Int,
+    motion: ListMotion,
+    onShift: (Int) -> Unit,
+) {
+    val reduced = LocalReducedMotion.current
+    val title = dayTitle(dayOffset, date)
+    val status = model?.statusLine(dayOffset)
     if (compact) {
-        CompactHero(model, onAdd)
+        CompactHero(title, date, status, onAdd)
         return
     }
-    CounterScene(items, Modifier.fillMaxWidth().height(206.dp).background(MaterialTheme.colorScheme.surfaceContainerLow), dark = MaterialTheme.colorScheme.background == Ink) {
-        Column(Modifier.padding(start = 24.dp, top = 32.dp)) {
-            Text(LocalDate.now().format(heroDate), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text("Today", style = MaterialTheme.typography.headlineLarge)
-            if (model != null && model.scheduledCount > 0) {
+    // Swiping across the picture moves a day at a time, the same way the days sit in the strip below.
+    val shift by rememberUpdatedState(onShift)
+    val swipe = Modifier.pointerInput(Unit) {
+        var dragged = 0f
+        detectHorizontalDragGestures(
+            onDragStart = { dragged = 0f },
+            onDragEnd = { if (abs(dragged) > 56.dp.toPx()) shift(if (dragged < 0) 1 else -1) },
+        ) { _, amount -> dragged += amount }
+    }
+    CounterScene(items, Modifier.fillMaxWidth().height(206.dp).background(MaterialTheme.colorScheme.surfaceContainerLow).then(swipe), dark = MaterialTheme.colorScheme.background == Ink) {
+        Column(Modifier.padding(start = 24.dp, top = 32.dp).listMotion(motion, 0, reduced, travel = 0.12f)) {
+            Text(date.format(heroDate), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(title, style = MaterialTheme.typography.headlineLarge)
+            if (model != null && status != null) {
                 Spacer(Modifier.height(18.dp))
-                val fraction by animateFloatAsState(
-                    model.takenCount.toFloat() / model.scheduledCount,
-                    spring(dampingRatio = 0.7f, stiffness = Spring.StiffnessLow),
-                    label = "progress",
-                )
-                Box(Modifier.width(136.dp).height(6.dp).background(MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(3.dp))) {
-                    Box(Modifier.fillMaxWidth(fraction.coerceIn(0f, 1f)).height(6.dp).background(MaterialTheme.colorScheme.secondary, RoundedCornerShape(3.dp)))
+                if (dayOffset <= 0) {
+                    val fraction by animateFloatAsState(
+                        model.takenCount.toFloat() / model.scheduledCount,
+                        if (reduced) Motion.fade() else spring(dampingRatio = 0.7f, stiffness = Spring.StiffnessLow),
+                        label = "progress",
+                    )
+                    // The bar grows by stretching from its starting edge, which costs nothing to draw.
+                    // Changing its width would make the header measure itself again every frame.
+                    val fromRight = LocalLayoutDirection.current == LayoutDirection.Rtl
+                    Box(Modifier.width(136.dp).height(6.dp).clip(RoundedCornerShape(3.dp)).background(MaterialTheme.colorScheme.outlineVariant)) {
+                        Box(
+                            Modifier.fillMaxSize()
+                                .graphicsLayer {
+                                    scaleX = fraction.coerceIn(0f, 1f)
+                                    transformOrigin = TransformOrigin(if (fromRight) 1f else 0f, 0.5f)
+                                }
+                                .background(MaterialTheme.colorScheme.secondary),
+                        )
+                    }
+                    Spacer(Modifier.height(8.dp))
                 }
-                Spacer(Modifier.height(8.dp))
                 // The count rolls up when a dose is taken, and back down on undo.
                 AnimatedContent(
-                    targetState = model.takenCount to model.scheduledCount,
+                    targetState = model.takenCount to status,
                     transitionSpec = {
-                        val up = targetState.first >= initialState.first
-                        (slideInVertically { if (up) it else -it } + fadeIn()) togetherWith
-                            (slideOutVertically { if (up) -it else it } + fadeOut())
+                        if (reduced) {
+                            ContentTransform(fadeIn(Motion.fade()), fadeOut(Motion.fade()), sizeTransform = null)
+                        } else {
+                            val up = targetState.first >= initialState.first
+                            ContentTransform(
+                                slideInVertically { if (up) it else -it } + fadeIn(),
+                                slideOutVertically { if (up) -it else it } + fadeOut(),
+                                sizeTransform = null,
+                            )
+                        }
                     },
                     label = "count",
-                ) { (taken, total) ->
-                    Text(
-                        if (taken == total) "All taken" else "$taken of $total taken",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                ) { (_, text) ->
+                    Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }
     }
 }
 
-/** One line for a short screen: Today, the count, and the add button. No counter art. */
+/** One line for a short screen: the day, the count, and the add button. No counter art. */
 @Composable
-private fun CompactHero(model: TodayModel?, onAdd: () -> Unit) {
+private fun CompactHero(title: String, date: LocalDate, status: String?, onAdd: () -> Unit) {
     Row(
         Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceContainerLow).padding(start = 24.dp, end = 12.dp, top = 8.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text("Today", style = MaterialTheme.typography.titleLarge)
+        Text(title, style = MaterialTheme.typography.titleLarge)
         Spacer(Modifier.width(12.dp))
         Text(
-            LocalDate.now().format(heroDate) + (model?.takeIf { it.scheduledCount > 0 }?.let { m ->
-                if (m.takenCount == m.scheduledCount) " · All taken" else " · ${m.takenCount} of ${m.scheduledCount} taken"
-            } ?: ""),
+            date.format(heroDate) + (status?.let { " · $it" } ?: ""),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.weight(1f),
@@ -426,42 +597,64 @@ private fun CompactHero(model: TodayModel?, onAdd: () -> Unit) {
     }
 }
 
+/**
+ * What a row starts with. With several people it's the person's initial; with one it's the
+ * medicine's own picture, or its container for medicines that have no pill picture.
+ */
 @Composable
-private fun LateCard(dose: TodayDose, onTaken: () -> Unit, onSnooze: () -> Unit, onSkip: () -> Unit) {
-    val shape = RoundedCornerShape(16.dp)
+private fun Lead(medicine: Medicine, profile: app.dosekeeper.data.Profile?, showPerson: Boolean, dimmed: Boolean = false) {
+    val backdrop = MaterialTheme.colorScheme.background
+    if (showPerson) {
+        ProfileBadge(profile, dimmed = dimmed, container = backdrop)
+        return
+    }
+    Box(Modifier.size(44.dp).background(backdrop, CircleShape), contentAlignment = Alignment.Center) {
+        if (medicine.shape != null) PillVisualizer(medicine, size = 30.dp, dimmed = dimmed)
+        else BottleGlyph(Bottle.of(medicine.medForm), height = 28.dp, dimmed = dimmed)
+    }
+}
+
+@Composable
+private fun LateCard(dose: TodayDose, showPerson: Boolean, onTaken: () -> Unit, onSnooze: () -> Unit, onSkip: () -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    // Pressing Taken dips the whole card, the same as pressing a dose that isn't late.
+    val taking = remember { MutableInteractionSource() }
+    val press = rememberPressScale(taking)
     Column(
-        Modifier.padding(horizontal = 24.dp, vertical = 4.dp).fillMaxWidth()
-            .background(MaterialTheme.colorScheme.errorContainer, shape)
-            .border(1.dp, Overdue.copy(alpha = 0.25f), shape)
+        Modifier.padding(horizontal = 16.dp, vertical = 5.dp).fillMaxWidth()
+            .graphicsLayer { scaleX = press.value; scaleY = press.value }
+            .background(scheme.errorContainer, CardShape)
+            .border(1.dp, scheme.error.copy(alpha = 0.25f), CardShape)
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         // Read out as one sentence: "Amoxicillin 250 mg, late, due 8:00 AM, blue capsule".
         Row(Modifier.semantics(mergeDescendants = true) {}, verticalAlignment = Alignment.CenterVertically) {
-            ProfileBadge(dose.profile)
-            Spacer(Modifier.width(14.dp))
+            Lead(dose.medicine, dose.profile, showPerson)
+            Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text(dose.medicine.displayName, style = MaterialTheme.typography.titleMedium)
                 Text(
-                    listOfNotNull(dose.profile?.name, "late, due ${dose.due.friendlyDateTime().removePrefix("Today, ")}").joinToString(", ") +
+                    listOfNotNull(dose.profile?.name.takeIf { showPerson }, "late, due ${dose.due.friendlyDateTime().removePrefix("Today, ")}").joinToString(", ")
+                        .replaceFirstChar { it.uppercase() } +
                         (dose.snoozedUntil?.let { ", rings again at ${it.localTime()}" } ?: ""),
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = scheme.onSurfaceVariant,
                 )
             }
-            PillVisualizer(dose.medicine, Modifier.padding(start = 8.dp))
+            if (showPerson) PillVisualizer(dose.medicine, Modifier.padding(start = 8.dp))
         }
         // With the phone's font size turned well up, three buttons side by side would cut their
         // labels off, so they stack instead. They grow with the text rather than clipping it.
         if (LocalDensity.current.fontScale >= 1.5f) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = onTaken, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Taken") }
+                Button(onClick = onTaken, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp), interactionSource = taking) { Text("Taken") }
                 OutlinedButton(onClick = onSnooze, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Snooze") }
                 OutlinedButton(onClick = onSkip, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Skip") }
             }
         } else {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = onTaken, modifier = Modifier.weight(1.5f).heightIn(min = 48.dp)) { Text("Taken") }
+                Button(onClick = onTaken, modifier = Modifier.weight(1.5f).heightIn(min = 48.dp), interactionSource = taking) { Text("Taken") }
                 OutlinedButton(onClick = onSnooze, modifier = Modifier.weight(1f).heightIn(min = 48.dp), contentPadding = PaddingValues(0.dp)) { Text("Snooze") }
                 OutlinedButton(onClick = onSkip, modifier = Modifier.weight(1f).heightIn(min = 48.dp), contentPadding = PaddingValues(0.dp)) { Text("Skip") }
             }
@@ -470,14 +663,17 @@ private fun LateCard(dose: TodayDose, onTaken: () -> Unit, onSnooze: () -> Unit,
 }
 
 /**
- * A dose that isn't due yet. The medicine's current dose can be swiped right for Taken; letting go
- * before the threshold springs it back with nothing done. Due doses move up to the Late cards,
- * which have Snooze. There's no snooze swipe here, since snoozing a dose that isn't due would only
- * delay it.
+ * One dose on its own card. The medicine's current dose can be tapped on its check or swiped right
+ * for Taken; letting go before the threshold springs it back with nothing done. Due doses move up
+ * to the Late cards, which have Snooze. There's no snooze swipe here, since snoozing a dose that
+ * isn't due would only delay it.
+ *
+ * The card dips slightly under a finger and springs back on release. [preview] is a dose on a day
+ * other than today, shown to look at only.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun DoseRow(dose: TodayDose, haptics: Haptics, onCircle: () -> Unit, onClick: () -> Unit) {
+private fun DoseRow(dose: TodayDose, haptics: Haptics, showPerson: Boolean, preview: Boolean = false, onCircle: () -> Unit, onClick: () -> Unit) {
     val currentDose by rememberUpdatedState(dose)
     val taken by rememberUpdatedState(onCircle)
     val state = rememberSwipeToDismissBoxState(
@@ -491,110 +687,120 @@ private fun DoseRow(dose: TodayDose, haptics: Haptics, onCircle: () -> Unit, onC
         if (state.targetValue != SwipeToDismissBoxValue.Settled) haptics.tick()
     }
 
-    SwipeToDismissBox(
-        state = state,
-        enableDismissFromStartToEnd = dose.actionable,
-        enableDismissFromEndToStart = false,
-        backgroundContent = { SwipeBackground(state) },
+    val rowTouch = remember { MutableInteractionSource() }
+    val checkTouch = remember { MutableInteractionSource() }
+    val press = rememberPressScale(rowTouch, checkTouch)
+    Box(
+        Modifier.padding(horizontal = 16.dp, vertical = 5.dp).graphicsLayer {
+            scaleX = press.value
+            scaleY = press.value
+            shape = CardShape
+            clip = true
+        },
     ) {
-        DoseRowContent(dose, onCircle, onClick)
+        SwipeToDismissBox(
+            state = state,
+            enableDismissFromStartToEnd = dose.actionable,
+            enableDismissFromEndToStart = false,
+            backgroundContent = { SwipeBackground(state) },
+        ) {
+            DoseRowContent(dose, showPerson, preview, rowTouch, checkTouch, onCircle, onClick)
+        }
     }
 }
 
+/** The green "Taken" strip uncovered by a swipe. It brightens once letting go will take the dose. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SwipeBackground(state: SwipeToDismissBoxState) {
     val scheme = MaterialTheme.colorScheme
-    val direction = state.dismissDirection
+    val reduced = LocalReducedMotion.current
+    val showing = state.dismissDirection == SwipeToDismissBoxValue.StartToEnd
     val armed = state.targetValue != SwipeToDismissBoxValue.Settled
-    val color by animateColorAsState(
-        when {
-            direction == SwipeToDismissBoxValue.StartToEnd -> if (armed) scheme.secondary else scheme.secondary.copy(alpha = 0.55f)
-            direction == SwipeToDismissBoxValue.EndToStart -> if (armed) scheme.outline else scheme.surfaceVariant
-            else -> Color.Transparent
-        },
-        label = "swipe",
-    )
-    val iconScale by animateFloatAsState(if (armed) 1.15f else 0.85f, spring(dampingRatio = 0.45f), label = "swipeIcon")
-    val towardsEnd = direction == SwipeToDismissBoxValue.StartToEnd
-    Row(
-        Modifier.fillMaxSize().background(color).padding(horizontal = 28.dp),
-        horizontalArrangement = if (towardsEnd) Arrangement.Start else Arrangement.End,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        if (direction == SwipeToDismissBoxValue.Settled) return@Row
-        val tint = if (towardsEnd) scheme.onSecondary else scheme.onSurface
-        if (!towardsEnd) Text("Snooze", color = tint, style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(end = 10.dp))
-        Icon(
-            if (towardsEnd) Icons.Filled.Check else Icons.Filled.Snooze,
-            contentDescription = null,
-            tint = tint,
-            modifier = Modifier.size(24.dp).graphicsLayer { scaleX = iconScale; scaleY = iconScale },
-        )
-        if (towardsEnd) Text("Taken", color = tint, style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(start = 10.dp))
-    }
-}
-
-@Composable
-private fun DoseRowContent(dose: TodayDose, onCircle: () -> Unit, onClick: () -> Unit) {
-    val scheme = MaterialTheme.colorScheme
-    val done = dose.status != null
-    // Done rows step back to the secondary text color, which still passes 4.5:1 on the background.
-    val nameColor by animateColorAsState(if (done) scheme.onSurfaceVariant else scheme.onSurface, tween(300), label = "name")
-    Column(Modifier.background(scheme.background).padding(horizontal = 24.dp)) {
-        Row(
-            Modifier.fillMaxWidth().clickable(enabled = dose.actionable || dose.undoable, onClick = onClick).padding(vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            ProfileBadge(dose.profile, dimmed = done)
-            Spacer(Modifier.width(14.dp))
-            Column(Modifier.weight(1f)) {
-                Text(
-                    dose.medicine.displayName,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = nameColor,
-                    textDecoration = if (dose.status == DoseStatus.TAKEN) TextDecoration.LineThrough else null,
+    val strength by animateFloatAsState(if (!showing) 0f else if (armed) 1f else 0.55f, Motion.fade(), label = "swipe")
+    val iconScale by animateFloatAsState(if (armed || reduced) 1.15f else 0.85f, Motion.Pop, label = "swipeIcon")
+    Box(Modifier.fillMaxSize()) {
+        Box(Modifier.fillMaxSize().graphicsLayer { alpha = strength }.background(scheme.secondary))
+        if (showing) {
+            Row(Modifier.fillMaxSize().padding(horizontal = 28.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    Icons.Filled.Check,
+                    contentDescription = null,
+                    tint = scheme.onSecondary,
+                    modifier = Modifier.size(24.dp).graphicsLayer { scaleX = iconScale; scaleY = iconScale },
                 )
-                val time = dose.due.localTime()
-                // The exact moment it was marked taken gets its own line, so "did I take it?" is
-                // answered at a glance. The time is the real tap time and can't be edited.
-                if (dose.status == DoseStatus.TAKEN && dose.at != null) {
-                    Text(dose.at.takenLabel(), style = MaterialTheme.typography.labelLarge, color = scheme.onSurface)
-                }
-                val sub = when (dose.status) {
-                    DoseStatus.TAKEN -> "Due $time"
-                    DoseStatus.SKIPPED -> "Due $time, skipped"
-                    DoseStatus.MISSED -> "Due $time, missed"
-                    null -> listOfNotNull(time, dose.profile?.name, dose.medicine.medForm.label.lowercase()).joinToString(", ") +
-                        (dose.snoozedUntil?.let { ", rings again at ${it.localTime()}" } ?: "")
-                }
-                Text(sub, style = MaterialTheme.typography.bodySmall, color = if (dose.status == DoseStatus.MISSED) Overdue else scheme.onSurfaceVariant)
-            }
-            PillVisualizer(dose.medicine, Modifier.padding(horizontal = 8.dp), dimmed = done)
-            when {
-                dose.status == DoseStatus.TAKEN -> CheckCircle(true, enabled = dose.undoable, label = "Mark as not taken", onClick = onCircle)
-                dose.actionable -> CheckCircle(false, enabled = true, label = "Mark as taken", onClick = onCircle)
-                dose.status == null -> Text("Later", style = MaterialTheme.typography.labelMedium, color = scheme.onSurfaceVariant)
+                Text("Taken", color = scheme.onSecondary, style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(start = 10.dp))
             }
         }
-        HorizontalDivider(color = scheme.outlineVariant)
     }
 }
 
-/** The round check. Filling it springs out from the middle and the tick pops in after. */
 @Composable
-private fun CheckCircle(checked: Boolean, enabled: Boolean, label: String, onClick: () -> Unit) {
+private fun DoseRowContent(
+    dose: TodayDose,
+    showPerson: Boolean,
+    preview: Boolean,
+    rowTouch: MutableInteractionSource,
+    checkTouch: MutableInteractionSource,
+    onCircle: () -> Unit,
+    onClick: () -> Unit,
+) {
     val scheme = MaterialTheme.colorScheme
-    val fill by animateFloatAsState(
-        if (checked) 1f else 0f,
-        spring(dampingRatio = 0.5f, stiffness = Spring.StiffnessMediumLow),
-        label = "fill",
-    )
-    val tick by animateFloatAsState(
-        if (checked) 1f else 0f,
-        spring(dampingRatio = 0.4f, stiffness = Spring.StiffnessLow),
-        label = "tick",
-    )
+    val done = dose.status != null
+    // A finished dose's name steps back by fading, which is cheaper than changing its color and
+    // still passes 4.5:1 on the card.
+    val nameAlpha by animateFloatAsState(if (done) DONE_NAME_ALPHA else 1f, tween(300), label = "name")
+    Row(
+        Modifier.fillMaxWidth().background(cardColor())
+            .clickable(interactionSource = rowTouch, indication = ripple(), enabled = !preview && (dose.actionable || dose.undoable), onClick = onClick)
+            .heightIn(min = 72.dp)
+            .padding(start = 14.dp, end = 8.dp, top = 12.dp, bottom = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Lead(dose.medicine, dose.profile, showPerson, dimmed = done)
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                dose.medicine.displayName,
+                style = MaterialTheme.typography.titleMedium,
+                color = scheme.onSurface,
+                textDecoration = if (dose.status == DoseStatus.TAKEN) TextDecoration.LineThrough else null,
+                modifier = Modifier.graphicsLayer { alpha = nameAlpha },
+            )
+            val time = dose.due.localTime()
+            // The exact moment it was marked taken gets its own line, so "did I take it?" is
+            // answered at a glance. The time is the real tap time and can't be edited.
+            if (dose.status == DoseStatus.TAKEN && dose.at != null) {
+                Text(dose.at.takenLabel(), style = MaterialTheme.typography.labelLarge, color = scheme.onSurface)
+            }
+            val sub = when (dose.status) {
+                DoseStatus.TAKEN -> "Due $time"
+                DoseStatus.SKIPPED -> "Due $time, skipped"
+                DoseStatus.MISSED -> "Due $time, missed"
+                null -> listOfNotNull(time, dose.profile?.name.takeIf { showPerson }).joinToString(", ") +
+                    (dose.snoozedUntil?.let { ", rings again at ${it.localTime()}" } ?: "")
+            }
+            Text(sub, style = MaterialTheme.typography.bodySmall, color = if (dose.status == DoseStatus.MISSED) scheme.error else scheme.onSurfaceVariant)
+        }
+        if (showPerson) PillVisualizer(dose.medicine, Modifier.padding(horizontal = 8.dp), dimmed = done)
+        when {
+            dose.status == DoseStatus.TAKEN -> CheckCircle(true, enabled = !preview && dose.undoable, label = "Mark as not taken", touch = checkTouch, onClick = onCircle)
+            dose.actionable -> CheckCircle(false, enabled = true, label = "Mark as taken", touch = checkTouch, onClick = onCircle)
+            dose.status == null && !preview -> Text("Later", style = MaterialTheme.typography.labelMedium, color = scheme.onSurfaceVariant, modifier = Modifier.padding(end = 10.dp))
+        }
+    }
+}
+
+/**
+ * The round check. The green fill springs out from the middle and the tick pops in just after,
+ * a touch past full size before it settles. With animations removed, both simply fade in.
+ */
+@Composable
+private fun CheckCircle(checked: Boolean, enabled: Boolean, label: String, touch: MutableInteractionSource, onClick: () -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    val reduced = LocalReducedMotion.current
+    val fill by animateFloatAsState(if (checked) 1f else 0f, if (reduced) Motion.fade() else Motion.Fill, label = "fill")
+    val tick by animateFloatAsState(if (checked) 1f else 0f, if (reduced) Motion.fade() else Motion.Pop, label = "tick")
     val ring = if (scheme.background == Ink) ControlOutlineDark else ControlOutlineLight
     // The touch target is 48dp; the circle drawn inside it stays 44dp.
     Box(
@@ -603,62 +809,94 @@ private fun CheckCircle(checked: Boolean, enabled: Boolean, label: String, onCli
                 enabled = enabled,
                 onClickLabel = label,
                 role = Role.Button,
-                interactionSource = remember { MutableInteractionSource() },
+                interactionSource = touch,
                 indication = ripple(bounded = false, radius = 26.dp),
                 onClick = onClick,
             ),
         contentAlignment = Alignment.Center,
     ) {
-        Box(Modifier.size(44.dp).border(1.5.dp, ring.copy(alpha = (1f - fill).coerceIn(0f, 1f)), CircleShape))
-        Box(Modifier.size(44.dp).graphicsLayer { scaleX = fill; scaleY = fill }.background(scheme.secondary, CircleShape))
+        Box(Modifier.size(44.dp).graphicsLayer { alpha = (1f - fill).coerceIn(0f, 1f) }.border(1.5.dp, ring, CircleShape))
+        Box(
+            Modifier.size(44.dp)
+                .graphicsLayer {
+                    if (reduced) alpha = fill.coerceIn(0f, 1f) else { scaleX = fill; scaleY = fill }
+                }
+                .background(scheme.secondary, CircleShape),
+        )
         Icon(
             Icons.Filled.Check,
             contentDescription = if (checked) "Taken" else "Not taken yet",
             tint = scheme.onSecondary,
             modifier = Modifier.size(22.dp).graphicsLayer {
                 alpha = tick.coerceIn(0f, 1f)
-                scaleX = tick
-                scaleY = tick
+                if (!reduced) { scaleX = tick; scaleY = tick }
             },
         )
     }
 }
 
 @Composable
-private fun AsNeededRowView(row: AsNeededRow, onLog: () -> Unit) {
+private fun AsNeededRowView(row: AsNeededRow, showPerson: Boolean, onLog: () -> Unit) {
     val scheme = MaterialTheme.colorScheme
-    Column(Modifier.padding(horizontal = 24.dp)) {
-        Row(Modifier.fillMaxWidth().padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-            ProfileBadge(row.profile)
-            Spacer(Modifier.width(14.dp))
-            Column(Modifier.weight(1f).semantics(mergeDescendants = true) {}) {
-                Text(row.medicine.displayName, style = MaterialTheme.typography.titleMedium)
-                val sub = when {
-                    row.notBefore != null -> "Not before ${row.notBefore.localTime()}"
-                    row.lastTaken != null -> "Last taken ${row.lastTaken.friendlyDateTime()}"
-                    else -> "Not taken yet"
-                }
-                Text(sub, style = MaterialTheme.typography.bodySmall, color = if (row.notBefore != null) Overdue else scheme.onSurfaceVariant)
+    Row(
+        Modifier.padding(horizontal = 16.dp, vertical = 5.dp).fillMaxWidth()
+            .background(cardColor(), CardShape)
+            .padding(start = 14.dp, end = 12.dp, top = 12.dp, bottom = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Lead(row.medicine, row.profile, showPerson)
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f).semantics(mergeDescendants = true) {}) {
+            Text(row.medicine.displayName, style = MaterialTheme.typography.titleMedium)
+            val sub = when {
+                row.notBefore != null -> "Not before ${row.notBefore.localTime()}"
+                row.lastTaken != null -> "Last taken ${row.lastTaken.friendlyDateTime()}"
+                else -> "Not taken yet"
             }
-            PillVisualizer(row.medicine, Modifier.padding(horizontal = 8.dp))
-            OutlinedButton(onClick = onLog, modifier = Modifier.heightIn(min = 48.dp)) { Text("Took it") }
+            Text(sub, style = MaterialTheme.typography.bodySmall, color = if (row.notBefore != null) scheme.error else scheme.onSurfaceVariant)
         }
-        HorizontalDivider(color = scheme.outlineVariant)
+        if (showPerson) PillVisualizer(row.medicine, Modifier.padding(horizontal = 8.dp))
+        OutlinedButton(onClick = onLog, modifier = Modifier.heightIn(min = 48.dp)) { Text("Took it") }
+    }
+}
+
+/** A medicine on a repeating timer, on a coming day: its times aren't known yet, so it says how often. */
+@Composable
+private fun TimedRow(medicine: Medicine, profile: app.dosekeeper.data.Profile?, showPerson: Boolean) {
+    Row(
+        Modifier.padding(horizontal = 16.dp, vertical = 5.dp).fillMaxWidth()
+            .background(cardColor(), CardShape)
+            .heightIn(min = 72.dp)
+            .padding(start = 14.dp, end = 12.dp, top = 12.dp, bottom = 12.dp)
+            .semantics(mergeDescendants = true) {},
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Lead(medicine, profile, showPerson)
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(medicine.displayName, style = MaterialTheme.typography.titleMedium)
+            val often = runCatching { medicine.parsedSchedule.describe() }.getOrDefault("")
+            Text(
+                listOfNotNull(often.takeIf { it.isNotEmpty() }, profile?.name.takeIf { showPerson }).joinToString(", "),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 
 /** "Time to refill" on Today, shown from about a week before a tracked supply runs out. */
 @Composable
-private fun LowSupplyCard(med: app.dosekeeper.data.Medicine, outlook: Supply.Outlook, modifier: Modifier, onRefilled: () -> Unit) {
+private fun LowSupplyCard(med: Medicine, outlook: Supply.Outlook, onRefilled: () -> Unit) {
     Row(
-        modifier.padding(start = 24.dp, end = 24.dp, top = 16.dp).fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(16.dp))
+        Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp).fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surfaceVariant, CardShape)
             .padding(start = 16.dp, top = 10.dp, bottom = 10.dp, end = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
             Text("Refill ${med.name}", style = MaterialTheme.typography.titleSmall)
-            Text(supplyLine(outlook, med.medForm.unit, med.supplyLeft ?: 0.0), style = MaterialTheme.typography.bodySmall, color = Overdue)
+            Text(supplyLine(outlook, med.medForm.unit, med.supplyLeft ?: 0.0), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
         }
         TextButton(onClick = onRefilled) { Text("Refilled") }
     }

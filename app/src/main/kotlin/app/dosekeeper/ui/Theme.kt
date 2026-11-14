@@ -26,8 +26,12 @@ val Fill = Color(0xFFF3F4F6)
  * Outlines of controls that have no fill, such as the empty check circle. The hairline greys are
  * too faint to find a button by, so these keep 3:1 against the background.
  */
-val ControlOutlineLight = Color(0xFF858C96)
+val ControlOutlineLight = Color(0xFF767D87)
 val ControlOutlineDark = Color(0xFF7A828C)
+
+/** The soft grey a dose card is filled with. Text and outlines on it keep their contrast. */
+val CardLight = Color(0xFFF5F6F7)
+val CardDark = Color(0xFF1D2126)
 
 private val light = lightColorScheme(
     primary = Ink,
@@ -120,6 +124,10 @@ private val type = Typography(
 fun DoseKeeperTheme(content: @Composable () -> Unit) {
     MaterialTheme(colorScheme = if (isSystemInDarkTheme()) dark else light, typography = type, content = content)
 }
+
+/** The fill of a card on Today, for the current theme. */
+@Composable
+fun cardColor(): Color = if (MaterialTheme.colorScheme.background == Ink) CardDark else CardLight
 
 /** The fixed dark look of the full-screen alarm, whatever the phone's theme. */
 @Composable
