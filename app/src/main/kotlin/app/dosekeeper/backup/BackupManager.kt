@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import androidx.documentfile.provider.DocumentFile
 import androidx.room.withTransaction
+import app.dosekeeper.app
 import app.dosekeeper.core.BackupCrypto
 import app.dosekeeper.data.AppDatabase
 import app.dosekeeper.data.DoseLog
@@ -71,7 +72,7 @@ class BackupManager(
             settings.lastAutoBackupError = null
         } catch (e: Exception) {
             settings.lastAutoBackupError = e.message ?: e.javaClass.simpleName
-            Notifier(context).showStatus(Notifier.BACKUP_NOTIFICATION_ID, "Auto backup failed", "Open Countertop to pick the backup folder again.")
+            context.app.notifier.showStatus(Notifier.BACKUP_NOTIFICATION_ID, "Auto backup failed", "Open Countertop to pick the backup folder again.")
         }
     }
 
@@ -83,7 +84,11 @@ class BackupManager(
             .put("format", FORMAT)
             .put("version", VERSION)
             .put("exportedAt", System.currentTimeMillis())
-            .put("settings", JSONObject().put("snoozeMinutes", settings.snoozeMinutes).put("missedWindowHours", settings.missedWindowHours))
+            .put(
+                "settings",
+                JSONObject().put("snoozeMinutes", settings.snoozeMinutes).put("missedWindowHours", settings.missedWindowHours)
+                    .put("hideNamesOnLockScreen", settings.hideNamesOnLockScreen),
+            )
             .put("profiles", JSONArray(profiles.map { it.toJson() }))
             .put("medicines", JSONArray(medicines.map { it.toJson() }))
             .put("doses", JSONArray(doses.map { it.toJson() }))
@@ -131,6 +136,7 @@ class BackupManager(
         json.optJSONObject("settings")?.let {
             settings.snoozeMinutes = it.optInt("snoozeMinutes", settings.snoozeMinutes)
             settings.missedWindowHours = it.optInt("missedWindowHours", settings.missedWindowHours)
+            settings.hideNamesOnLockScreen = it.optBoolean("hideNamesOnLockScreen", settings.hideNamesOnLockScreen)
         }
         engine.refreshAll()
         return Summary(profiles.size, medicines.size, doses.size)
@@ -163,6 +169,8 @@ private fun Medicine.toJson() = JSONObject()
     .put("anchorAt", anchorAt ?: JSONObject.NULL).put("nextDueAt", nextDueAt ?: JSONObject.NULL)
     .put("soundUri", soundUri ?: JSONObject.NULL).put("createdAt", createdAt)
     .put("supplyLeft", supplyLeft ?: JSONObject.NULL).put("perDose", perDose).put("refillSize", refillSize ?: JSONObject.NULL)
+    .put("pillShape", pillShape ?: JSONObject.NULL).put("pillColor", pillColor ?: JSONObject.NULL)
+    .put("injectionSites", injectionSites ?: JSONObject.NULL)
 
 private fun medicineFrom(o: JSONObject) = Medicine(
     id = o.getLong("id"), profileId = o.getLong("profileId"), name = o.getString("name"),
@@ -172,13 +180,15 @@ private fun medicineFrom(o: JSONObject) = Medicine(
     soundUri = o.optStringOrNull("soundUri"), createdAt = o.optLong("createdAt", System.currentTimeMillis()),
     supplyLeft = o.optDoubleOrNull("supplyLeft"), perDose = o.optDouble("perDose", 1.0).takeIf { it > 0 } ?: 1.0,
     refillSize = o.optDoubleOrNull("refillSize"),
+    pillShape = o.optStringOrNull("pillShape"), pillColor = o.optStringOrNull("pillColor"),
+    injectionSites = o.optStringOrNull("injectionSites"),
 )
 
 private fun DoseLog.toJson() = JSONObject()
     .put("id", id).put("medicineId", medicineId).put("dueAt", dueAt ?: JSONObject.NULL)
-    .put("status", status).put("actionAt", actionAt)
+    .put("status", status).put("actionAt", actionAt).put("site", site ?: JSONObject.NULL)
 
 private fun doseFrom(o: JSONObject) = DoseLog(
     id = o.getLong("id"), medicineId = o.getLong("medicineId"), dueAt = o.optLongOrNull("dueAt"),
-    status = o.getString("status"), actionAt = o.getLong("actionAt"),
+    status = o.getString("status"), actionAt = o.getLong("actionAt"), site = o.optStringOrNull("site"),
 )

@@ -28,6 +28,29 @@ enum class MedForm(val label: String, val unit: String) {
 
 enum class MedStatus { ACTIVE, PAUSED, ARCHIVED }
 
+/** The outline drawn for a medicine, so two medicines can be told apart at a glance. */
+enum class PillShape(val label: String) {
+    ROUND("Round tablet"), CAPSULE("Capsule"), INJECTION("Injection");
+
+    companion object {
+        /** The picture a medicine gets until one is chosen. Liquids, drops and the rest have none. */
+        fun defaultFor(form: MedForm): PillShape? = when (form) {
+            MedForm.PILL -> ROUND
+            MedForm.INJECTION -> INJECTION
+            else -> null
+        }
+    }
+}
+
+/**
+ * The few muted colors a pill picture can be filled with. Stored by name, so the color can also be
+ * said in words ("blue capsule") and never has to be the only thing telling two medicines apart.
+ */
+enum class PillColor(val label: String, val argb: Long) {
+    WHITE("White", 0xFFF4F4F1), YELLOW("Yellow", 0xFFE8D58E), ORANGE("Orange", 0xFFE5AE82), PINK("Pink", 0xFFE6B0BA),
+    RED("Red", 0xFFCB7F78), BLUE("Blue", 0xFF93B4D8), GREEN("Green", 0xFF9FC6A6), PURPLE("Purple", 0xFFB5A6D6),
+}
+
 @Entity(tableName = "medicines", indices = [Index("profileId")])
 data class Medicine(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
@@ -52,6 +75,12 @@ data class Medicine(
     val refillSize: Double? = null,
     /** Set once the "running low" notice has been shown, so it isn't repeated every dose. */
     @ColumnInfo(defaultValue = "0") val lowSupplyNotified: Boolean = false,
+    /** A [PillShape] name. Null uses the default for the form. */
+    val pillShape: String? = null,
+    /** A [PillColor] name. Null draws the picture uncolored. */
+    val pillColor: String? = null,
+    /** Injection sites used in turn, one per line (see SiteRotation). Null when the medicine has none. */
+    val injectionSites: String? = null,
     val createdAt: Long = System.currentTimeMillis(),
 ) {
     val parsedSchedule: Schedule get() = ScheduleCodec.decode(schedule)
@@ -70,6 +99,15 @@ data class Medicine(
 
     val tracksSupply: Boolean get() = supplyLeft != null
 
+    /** The picture to draw for this medicine, or null when its form has none and none was chosen. */
+    val shape: PillShape?
+        get() = pillShape?.let { runCatching { PillShape.valueOf(it) }.getOrNull() } ?: PillShape.defaultFor(medForm)
+    val color: PillColor? get() = pillColor?.let { runCatching { PillColor.valueOf(it) }.getOrNull() }
+
+    /** "blue capsule", for screen readers and anywhere the picture needs words. Null without a picture. */
+    val looksLike: String?
+        get() = shape?.let { s -> listOfNotNull(color?.label, s.label).joinToString(" ").lowercase() }
+
     /** "Amoxicillin 250 mg" */
     val displayName: String get() = if (strength.isBlank()) name else "$name $strength"
 }
@@ -85,6 +123,8 @@ data class DoseLog(
     val dueAt: Long?,
     val status: String,
     val actionAt: Long,
+    /** Where an injection went, for medicines with [Medicine.injectionSites]. Null otherwise. */
+    val site: String? = null,
 ) {
     val doseStatus: DoseStatus get() = DoseStatus.valueOf(status)
 }
