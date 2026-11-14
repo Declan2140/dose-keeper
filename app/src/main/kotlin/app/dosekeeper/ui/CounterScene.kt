@@ -30,6 +30,7 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
 import app.dosekeeper.data.MedForm
 
 /** The container drawn on the counter for each medicine. */
@@ -91,7 +92,8 @@ fun CounterScene(
     val shown = items.take(maxShown)
     val extra = items.size - shown.size
     Box(modifier) {
-        Canvas(Modifier.fillMaxSize()) {
+        // Sized to the box, so the wall and counter stretch if large text makes the scene taller.
+        Canvas(Modifier.matchParentSize()) {
             val counterTop = size.height - counterHeight.toPx()
             drawTiles(colors, tileSize.toPx(), counterTop)
             drawRect(colors.counter, topLeft = Offset(0f, counterTop), size = Size(size.width, size.height - counterTop))
@@ -144,9 +146,16 @@ private fun AnimatedBottles(items: List<CounterItem>, colors: SceneColors, scale
                 }
                 val shift = remember { Animatable(distance) }
                 val seen = remember { Animatable(if (item.key in initialKeys) 1f else 0f) }
+                val oneLeaving = display.size > items.size
                 LaunchedEffect(distance, present, reduced) {
                     if (!present) return@LaunchedEffect
-                    if (reduced) shift.snapTo(distance) else shift.animateTo(distance, Motion.glide())
+                    if (reduced) {
+                        shift.snapTo(distance)
+                    } else {
+                        // Wait for a leaving container to lift clear before closing the gap it leaves.
+                        if (oneLeaving) delay(220)
+                        shift.animateTo(distance, Motion.glide())
+                    }
                 }
                 LaunchedEffect(present, reduced) {
                     if (present) {

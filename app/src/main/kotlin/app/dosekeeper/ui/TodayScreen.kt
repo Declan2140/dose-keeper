@@ -527,8 +527,19 @@ private fun Hero(
             onDragEnd = { if (abs(dragged) > 56.dp.toPx()) shift(if (dragged < 0) 1 else -1) },
         ) { _, amount -> dragged += amount }
     }
-    CounterScene(items, Modifier.fillMaxWidth().height(206.dp).background(MaterialTheme.colorScheme.surfaceContainerLow).then(swipe), dark = MaterialTheme.colorScheme.background == Ink) {
-        Column(Modifier.padding(start = 24.dp, top = 32.dp).listMotion(motion, 0, reduced, travel = 0.12f)) {
+    // With the phone's text made large, the words need the room: one container stays on the
+    // counter, the words keep clear of it, and the scene grows taller instead of cutting them off.
+    val largeText = LocalDensity.current.fontScale >= 1.5f
+    CounterScene(
+        items,
+        Modifier.fillMaxWidth().heightIn(min = 206.dp).background(MaterialTheme.colorScheme.surfaceContainerLow).then(swipe),
+        dark = MaterialTheme.colorScheme.background == Ink,
+        maxShown = if (largeText) 1 else 3,
+    ) {
+        Column(
+            Modifier.padding(start = 24.dp, top = 32.dp, end = if (largeText) 112.dp else 24.dp, bottom = 40.dp)
+                .listMotion(motion, 0, reduced, travel = 0.12f),
+        ) {
             Text(date.format(heroDate), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text(title, style = MaterialTheme.typography.headlineLarge)
             if (model != null && status != null) {
