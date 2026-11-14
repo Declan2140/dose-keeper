@@ -24,7 +24,7 @@ bought, since purchases only work once the app is on Google Play.
   encryption. All the scheduling rules (including daylight saving changes) are tested here.
   Run with `./gradlew :core:test`.
 - `app/` is the Android app: Jetpack Compose UI, Room database, AlarmManager alarms, WorkManager
-  watchdog, Play Billing.
+  watchdog, Play Billing, and a Glance home screen widget.
 
 ## How reminders stay reliable
 
@@ -34,6 +34,18 @@ bought, since purchases only work once the app is on Google Play.
 - Alarms are re-set after a reboot, app update, clock change and time zone change, and a daily
   watchdog repairs anything missing.
 - The reliability checklist shows what Android or the phone maker is blocking, with fix buttons.
+
+## Privacy on the lock screen
+
+With "Hide medicine names on lock screen" on (the default), a locked phone shows only "Medication
+reminder" and the due time, on the notification and the full-screen alarm. Names appear once the
+phone is unlocked.
+
+## Home screen widget
+
+"Next dose" shows the next dose still open today with a Taken button. The tap goes through
+`ReminderEngine`, the same as the notification's button, and the app doesn't open. The button
+appears once the dose is within an hour of being due.
 
 ## Build
 
