@@ -1,6 +1,7 @@
 package app.dosekeeper.widget
 
 import android.content.Context
+import android.content.Intent
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -11,6 +12,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.glance.GlanceId
 import androidx.glance.GlanceModifier
+import androidx.glance.LocalContext
 import androidx.glance.LocalSize
 import androidx.glance.action.ActionParameters
 import androidx.glance.action.actionParametersOf
@@ -171,7 +173,7 @@ private fun Content(view: WidgetView) {
             .appWidgetBackground()
             .background(surface)
             .cornerRadius(20.dp)
-            .clickable(actionStartActivity<MainActivity>())
+            .clickable(actionStartActivity(Intent(LocalContext.current, MainActivity::class.java)))
             .padding(12.dp),
     ) {
         when (view) {
