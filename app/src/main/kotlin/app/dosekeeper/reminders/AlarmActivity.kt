@@ -84,6 +84,7 @@ class AlarmActivity : ComponentActivity() {
     private val unlocked = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             concealed = app.notifier.namesHidden()
+            if (!concealed) reveal()
         }
     }
 
@@ -98,6 +99,12 @@ class AlarmActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         concealed = app.notifier.namesHidden()
+        if (!concealed) reveal()
+    }
+
+    /** The phone is unlocked: the notification in the shade gets the medicine's name back too. */
+    private fun reveal() {
+        lifecycleScope.launch { app.engine.revealRinging() }
     }
 
     override fun onDestroy() {
@@ -112,6 +119,7 @@ class AlarmActivity : ComponentActivity() {
             object : KeyguardManager.KeyguardDismissCallback() {
                 override fun onDismissSucceeded() {
                     concealed = false
+                    reveal()
                 }
             },
         )

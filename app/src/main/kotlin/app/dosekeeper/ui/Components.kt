@@ -32,6 +32,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -71,7 +72,10 @@ fun ProfileBadge(profile: Profile?, size: Dp = 44.dp, dimmed: Boolean = false) {
  */
 @Composable
 fun <T> Segmented(options: List<T>, selected: T?, label: (T) -> String, onSelect: (T) -> Unit, modifier: Modifier = Modifier) {
-    if (options.size > 4) {
+    // Past a few options, or with the phone's text made large, the segments get too narrow and
+    // words break in the middle ("Capsu-le"). Wrapping chips keep every label whole.
+    val crowded = options.size > 4 || (options.size > 2 && LocalDensity.current.fontScale >= 1.5f)
+    if (crowded) {
         ChoiceChips(options, selected, label, onSelect, modifier)
         return
     }

@@ -7,8 +7,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -63,12 +65,29 @@ fun PillVisualizer(medicine: Medicine, modifier: Modifier = Modifier, size: Dp =
     PillVisualizer(shape, medicine.color, modifier, size, dimmed)
 }
 
-/** A circle with a score line across the middle. */
+/**
+ * A round tablet seen at an angle: an oval top with its edge showing below, so it reads as a pill
+ * and never as a minus sign or a "skipped" mark.
+ */
 private fun DrawScope.drawRoundTablet(fill: Color, outline: Color, stroke: Stroke) {
-    val r = size.minDimension * 0.36f
-    drawCircle(fill, r, center)
-    drawCircle(outline, r, center, style = stroke)
-    drawLine(outline, Offset(center.x - r * 0.55f, center.y), Offset(center.x + r * 0.55f, center.y), stroke.width, StrokeCap.Round)
+    val w = size.minDimension * 0.8f
+    val h = size.minDimension * 0.46f
+    val edge = size.minDimension * 0.14f
+    val left = center.x - w / 2
+    val top = center.y - (h + edge) / 2
+    val topOval = Size(w, h)
+    // The edge: the lower half of a second oval, joined to the top one by straight sides.
+    val side = Path().apply {
+        moveTo(left, top + h / 2)
+        lineTo(left, top + h / 2 + edge)
+        arcTo(Rect(Offset(left, top + edge), topOval), 180f, -180f, false)
+        lineTo(left + w, top + h / 2)
+        close()
+    }
+    drawPath(side, fill)
+    drawPath(side, outline, style = stroke)
+    drawOval(fill, Offset(left, top), topOval)
+    drawOval(outline, Offset(left, top), topOval, style = stroke)
 }
 
 /** A tilted two-part capsule: one half in the color, the other left plain. */

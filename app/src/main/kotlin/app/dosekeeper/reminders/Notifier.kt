@@ -129,6 +129,7 @@ class Notifier(private val context: Context) {
             .addAction(0, "Skip", DoseActionReceiver.pending(context, medicine.id, DoseActionReceiver.ACTION_SKIP))
         if (concealed) {
             builder.setContentTitle(GENERIC_TITLE).setContentText("$genericText. Unlock to see which medicine.")
+                .addExtras(android.os.Bundle().apply { putBoolean(EXTRA_CONCEALED, true) })
         } else {
             builder.setContentTitle(medicine.displayName)
                 .setContentText("${who}due $time")
@@ -220,6 +221,13 @@ class Notifier(private val context: Context) {
             .map { it.id.toLong() }
     fun cancelTest() = manager.cancel(TEST_NOTIFICATION_ID)
 
+    /** Ringing alarms that were posted without the medicine's name, while the phone was locked. */
+    fun concealedDoseIds(): List<Long> =
+        runCatching { manager.activeNotifications.toList() }.getOrDefault(emptyList())
+            .filter { it.notification.extras.getBoolean(EXTRA_CONCEALED, false) }
+            .map { it.id.toLong() }
+            .filter { it in 1 until BACKUP_NOTIFICATION_ID }
+
     private fun hasPostPermission(): Boolean =
         Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
             ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
@@ -230,6 +238,7 @@ class Notifier(private val context: Context) {
     companion object {
         /** All a locked phone says about a dose. Never a medicine or a person's name. */
         const val GENERIC_TITLE = "Medication reminder"
+        private const val EXTRA_CONCEALED = "app.dosekeeper.CONCEALED"
         const val CHANNEL_ALARMS = "dose_alarms"
         const val CHANNEL_STATUS = "status"
         const val CHANNEL_REFILLS = "refills"

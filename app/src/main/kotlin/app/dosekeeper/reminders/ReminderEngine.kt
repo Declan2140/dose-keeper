@@ -243,7 +243,7 @@ class ReminderEngine(
      */
     suspend fun revealRinging() = change {
         if (!settings.hideNamesOnLockScreen || notifier.namesHidden()) return@change
-        for (id in notifier.ringingDoseIds()) {
+        for (id in notifier.concealedDoseIds()) {
             val med = db.medicines().get(id) ?: continue
             val due = med.nextDueAt ?: continue
             if (med.isActive) notifier.showDose(med, db.profiles().get(med.profileId), Instant.ofEpochMilli(due), quiet = true)
