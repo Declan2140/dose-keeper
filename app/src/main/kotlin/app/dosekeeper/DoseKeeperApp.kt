@@ -1,6 +1,11 @@
 package app.dosekeeper
 
 import android.app.Application
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import androidx.core.content.ContextCompat
 import app.dosekeeper.backup.BackupManager
 import app.dosekeeper.billing.UnlockManager
 import app.dosekeeper.data.AppDatabase
@@ -11,6 +16,8 @@ import app.dosekeeper.reminders.Notifier
 import app.dosekeeper.reminders.ReminderEngine
 import app.dosekeeper.reminders.WatchdogWorker
 import app.dosekeeper.report.DoctorReport
+import app.dosekeeper.widget.NextDoseWidget
+import androidx.glance.appwidget.updateAll
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -25,7 +32,13 @@ class DoseKeeperApp : Application() {
     val settings by lazy { Settings(this) }
     val notifier by lazy { Notifier(this) }
     val alarms by lazy { AlarmScheduler(this) }
-    val engine by lazy { ReminderEngine(db, settings, alarms, notifier) }
+    val engine by lazy {
+        ReminderEngine(db, settings, alarms, notifier).also { engine ->
+            // Whatever changes a dose (the app, a notification button, an alarm, the widget itself)
+            // redraws the home screen widget straight away.
+            engine.onChanged = { appScope.launch { runCatching { NextDoseWidget().updateAll(this@DoseKeeperApp) } } }
+        }
+    }
     val backup by lazy { BackupManager(this, db, settings, engine) }
     val unlock by lazy { UnlockManager(this, settings, appScope) }
     val report by lazy { DoctorReport(this, db) }
@@ -35,6 +48,18 @@ class DoseKeeperApp : Application() {
         notifier.createChannels()
         WatchdogWorker.ensureScheduled(this)
         unlock.connect()
+        // Unlocking the phone puts medicine names back on alarms that rang while it was locked.
+        // Android only delivers this to a running app, which this is while an alarm is ringing.
+        ContextCompat.registerReceiver(
+            this,
+            object : BroadcastReceiver() {
+                override fun onReceive(context: Context, intent: Intent) {
+                    appScope.launch { engine.revealRinging() }
+                }
+            },
+            IntentFilter(Intent.ACTION_USER_PRESENT),
+            ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
         appScope.launch {
             if (db.profiles().count() == 0) {
                 db.profiles().insert(Profile(name = "Me", colorArgb = PROFILE_COLORS.first(), icon = "person"))

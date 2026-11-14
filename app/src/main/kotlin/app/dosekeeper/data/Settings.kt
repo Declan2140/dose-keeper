@@ -35,6 +35,14 @@ class Settings(context: Context) {
 
     val missedWindow: Duration get() = Duration.ofHours(missedWindowHours.toLong())
 
+    /**
+     * On by default: while the phone is locked, reminders say only "Medication reminder", so nobody
+     * glancing at the lock screen learns what someone takes. Names show once it's unlocked.
+     */
+    var hideNamesOnLockScreen: Boolean
+        get() = prefs.getBoolean("hideNamesOnLockScreen", true)
+        set(value) = edit { putBoolean("hideNamesOnLockScreen", value) }
+
     /** Last known purchase state, so the app works offline. Google Play confirms it when reachable. */
     var unlockedCache: Boolean
         get() = prefs.getBoolean("unlocked", false)
