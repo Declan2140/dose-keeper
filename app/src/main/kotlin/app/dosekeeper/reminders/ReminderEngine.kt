@@ -220,6 +220,19 @@ class ReminderEngine(
         if (settings.lastZone != zone.id) settings.lastZone = zone.id
     }
 
+    /**
+     * The phone was just unlocked: alarms that started ringing while it was locked said only
+     * "Medication reminder". Put the medicine's name on them now, without ringing again.
+     */
+    suspend fun revealRinging() = lock.withLock {
+        if (!settings.hideNamesOnLockScreen || notifier.namesHidden()) return@withLock
+        for (id in notifier.ringingDoseIds()) {
+            val med = db.medicines().get(id) ?: continue
+            val due = med.nextDueAt ?: continue
+            if (med.isActive) notifier.showDose(med, db.profiles().get(med.profileId), Instant.ofEpochMilli(due), quiet = true)
+        }
+    }
+
     fun cancelAllAlarms(medicines: List<Medicine>) {
         medicines.forEach {
             alarms.cancel(it.id)

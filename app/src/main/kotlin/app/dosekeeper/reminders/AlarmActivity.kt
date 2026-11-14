@@ -1,7 +1,10 @@
 package app.dosekeeper.reminders
 
+import android.app.KeyguardManager
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.os.Build
 import android.os.Bundle
 import android.text.format.DateFormat
@@ -18,6 +21,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.material3.Button
@@ -25,6 +29,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -41,6 +46,7 @@ import androidx.compose.ui.text.style.LineBreak
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import app.dosekeeper.app
 import app.dosekeeper.core.DoseStatus
@@ -69,10 +75,46 @@ class AlarmActivity : ComponentActivity() {
 
     private fun stillRinging(): List<Long> = app.notifier.ringingDoseIds().filter { it !in answered }
 
+    /**
+     * True while the phone is locked and names are set to stay hidden: the screen then says only
+     * "Medication reminder" until it's unlocked.
+     */
+    private var concealed by mutableStateOf(false)
+
+    private val unlocked = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            concealed = app.notifier.namesHidden()
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         showOverLockScreen()
+        concealed = app.notifier.namesHidden()
+        ContextCompat.registerReceiver(this, unlocked, IntentFilter(Intent.ACTION_USER_PRESENT), ContextCompat.RECEIVER_NOT_EXPORTED)
         render(intent)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        concealed = app.notifier.namesHidden()
+    }
+
+    override fun onDestroy() {
+        unregisterReceiver(unlocked)
+        super.onDestroy()
+    }
+
+    /** Asks for the PIN, pattern or fingerprint. The name appears once the phone is unlocked. */
+    private fun unlockToReveal() {
+        getSystemService(KeyguardManager::class.java).requestDismissKeyguard(
+            this,
+            object : KeyguardManager.KeyguardDismissCallback() {
+                override fun onDismissSucceeded() {
+                    concealed = false
+                }
+            },
+        )
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -107,6 +149,8 @@ class AlarmActivity : ComponentActivity() {
                     loaded?.let { (med, profile) ->
                         DoseAlarm(
                             med, profile, waiting,
+                            concealed = concealed,
+                            onReveal = ::unlockToReveal,
                             onAnswer = { act(id) { app.engine.answer(id, it) } },
                             onSnooze = { act(id) { app.engine.snooze(id) } },
                         )
@@ -151,6 +195,8 @@ private fun DoseAlarm(
     med: Medicine,
     profile: Profile?,
     waiting: Int,
+    concealed: Boolean,
+    onReveal: () -> Unit,
     onAnswer: (DoseStatus) -> Unit,
     onSnooze: () -> Unit,
 ) {
@@ -160,37 +206,48 @@ private fun DoseAlarm(
     val clock = due?.format(DateTimeFormatter.ofPattern(if (is24h) "H:mm" else "h:mm"))
     val marker = if (is24h) null else due?.format(DateTimeFormatter.ofPattern("a", Locale.getDefault()))
     AlarmScreen(
-        topLine = profile?.let { "For ${it.name}" },
+        // On a locked phone with names hidden, nothing here says who or what the dose is for.
+        topLine = if (concealed) null else profile?.let { "For ${it.name}" },
         // Shown by the buttons: the next alarm's own pop-up can cover the top of the screen.
         footer = when (waiting) { 0 -> null; 1 -> "1 more medicine due after this"; else -> "$waiting more medicines due after this" },
         clock = clock,
         marker = marker,
-        title = med.name,
-        detail = listOf(med.strength, med.medForm.label).filter { it.isNotBlank() }.joinToString(" "),
-        note = med.note,
-        bottle = Bottle.of(med.medForm),
+        title = if (concealed) Notifier.GENERIC_TITLE else med.name,
+        detail = if (concealed) "A dose is due." else listOf(med.strength, med.medForm.label).filter { it.isNotBlank() }.joinToString(" "),
+        note = if (concealed) "" else med.note,
+        bottle = if (concealed) Bottle.PILL else Bottle.of(med.medForm),
     ) {
+        if (concealed) {
+            TextButton(
+                onClick = onReveal,
+                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                colors = ButtonDefaults.textButtonColors(contentColor = Color.White),
+            ) { Text("Unlock to see which medicine", fontSize = 18.sp, textAlign = TextAlign.Center) }
+        }
         Button(
             onClick = { onAnswer(DoseStatus.TAKEN) },
-            modifier = Modifier.fillMaxWidth().height(76.dp),
+            modifier = Modifier.fillMaxWidth().heightIn(min = 76.dp),
             colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Ink),
         ) { Text("Taken", fontSize = 24.sp, fontWeight = FontWeight.SemiBold) }
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             OutlinedButton(
                 onClick = onSnooze,
-                modifier = Modifier.weight(1f).height(60.dp),
-                border = BorderStroke(1.dp, Color(0xFF3A3F46)),
+                modifier = Modifier.weight(1f).heightIn(min = 60.dp),
+                border = BorderStroke(1.dp, AlarmOutline),
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
             ) { Text("Snooze", fontSize = 18.sp, textAlign = TextAlign.Center) }
             OutlinedButton(
                 onClick = { onAnswer(DoseStatus.SKIPPED) },
-                modifier = Modifier.weight(1f).height(60.dp),
-                border = BorderStroke(1.dp, Color(0xFF3A3F46)),
+                modifier = Modifier.weight(1f).heightIn(min = 60.dp),
+                border = BorderStroke(1.dp, AlarmOutline),
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
             ) { Text("Skip", fontSize = 18.sp) }
         }
     }
 }
+
+/** Button outlines on the dark alarm screen, light enough to see at 3:1 against the background. */
+private val AlarmOutline = Color(0xFF7A828C)
 
 @Composable
 private fun TestAlarm(onDone: () -> Unit) {
@@ -205,7 +262,7 @@ private fun TestAlarm(onDone: () -> Unit) {
     ) {
         Button(
             onClick = onDone,
-            modifier = Modifier.fillMaxWidth().height(76.dp),
+            modifier = Modifier.fillMaxWidth().heightIn(min = 76.dp),
             colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Ink),
         ) { Text("Done", fontSize = 24.sp, fontWeight = FontWeight.SemiBold) }
     }
