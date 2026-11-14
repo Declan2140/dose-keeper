@@ -86,7 +86,7 @@ fun <T> Segmented(options: List<T>, selected: T?, label: (T) -> String, onSelect
             Box(
                 Modifier
                     .weight(1f)
-                    .heightIn(min = 44.dp)
+                    .heightIn(min = 48.dp)
                     .then(if (isSelected) Modifier.shadow(1.dp, shape).background(scheme.surface, shape) else Modifier)
                     .selectable(selected = isSelected, role = Role.Tab, onClick = { onSelect(option) })
                     .padding(horizontal = 6.dp, vertical = 10.dp),
