@@ -30,6 +30,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -49,10 +50,10 @@ const val ICON_PET = "pet"
 
 /** A plain grey circle with the person's initial, or a paw for a pet. */
 @Composable
-fun ProfileBadge(profile: Profile?, size: Dp = 44.dp, dimmed: Boolean = false) {
+fun ProfileBadge(profile: Profile?, size: Dp = 44.dp, dimmed: Boolean = false, container: Color? = null) {
     val scheme = MaterialTheme.colorScheme
     val content = if (dimmed) scheme.onSurfaceVariant.copy(alpha = 0.6f) else scheme.onSurface
-    Box(Modifier.size(size).background(scheme.surfaceVariant, CircleShape), contentAlignment = Alignment.Center) {
+    Box(Modifier.size(size).background(container ?: scheme.surfaceVariant, CircleShape), contentAlignment = Alignment.Center) {
         if (profile?.icon == ICON_PET) {
             Icon(Icons.Filled.Pets, contentDescription = profile.name, tint = content, modifier = Modifier.size(size * 0.48f))
         } else {
