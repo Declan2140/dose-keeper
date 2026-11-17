@@ -35,7 +35,13 @@ class Notifier(private val context: Context) {
      * True while medicine names must stay off the screen: the phone is locked and the user hasn't
      * turned "Hide medicine names on lock screen" off.
      */
-    fun namesHidden(): Boolean = context.app.settings.hideNamesOnLockScreen && keyguard.isKeyguardLocked
+    fun namesHidden(): Boolean = context.app.settings.hideNamesOnLockScreen && locked()
+
+    /**
+     * The phone is locked. While the alarm screen sits over the lock screen, isKeyguardLocked can
+     * read false, so a PIN or pattern that is still needed counts as locked too.
+     */
+    private fun locked(): Boolean = keyguard.isKeyguardLocked || keyguard.isDeviceLocked
 
     fun createChannels() {
         val alarmSound = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
@@ -106,7 +112,7 @@ class Notifier(private val context: Context) {
         if (!hasPostPermission()) return
         val id = notificationId(medicine.id)
         val hide = context.app.settings.hideNamesOnLockScreen
-        val concealed = hide && keyguard.isKeyguardLocked
+        val concealed = hide && locked()
         val fullScreen = PendingIntent.getActivity(
             context, id, AlarmActivity.intent(context, medicine.id),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,

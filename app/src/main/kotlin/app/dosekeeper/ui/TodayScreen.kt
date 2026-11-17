@@ -123,6 +123,7 @@ fun TodayScreen(onAddMedicine: () -> Unit, onOpenReliability: () -> Unit) {
     var unchecking by remember { mutableStateOf<TodayDose?>(null) }
     var refilling by remember { mutableStateOf<app.dosekeeper.data.Medicine?>(null) }
     var takingEarly by remember { mutableStateOf<TodayDose?>(null) }
+    var tooSoon by remember { mutableStateOf<AsNeededRow?>(null) }
     val snackbar = remember { SnackbarHostState() }
 
     // Re-evaluate late doses every 30 seconds, and catch up on anything missed while closed.
@@ -197,6 +198,10 @@ fun TodayScreen(onAddMedicine: () -> Unit, onOpenReliability: () -> Unit) {
         // Taking a dose well before it's due asks first, so a stray swipe can't log it hours early.
         val early = Duration.between(Instant.now(), dose.due) > Duration.ofHours(1)
         if (status == DoseStatus.TAKEN && early) takingEarly = dose else record(dose, status)
+    }
+    fun logAsNeeded(row: AsNeededRow) {
+        scope.launch { delay(Motion.TICK_LANDS_MS); haptics.taken() }
+        scope.launch { app.engine.logAsNeeded(row.medicine.id) }
     }
     fun snooze(dose: TodayDose) {
         haptics.soft()
@@ -377,8 +382,8 @@ fun TodayScreen(onAddMedicine: () -> Unit, onOpenReliability: () -> Unit) {
                 model.asNeeded.forEach { row ->
                     dayItem("an-${row.medicine.id}") {
                         AsNeededRowView(row, showPerson, onLog = {
-                            scope.launch { delay(Motion.TICK_LANDS_MS); haptics.taken() }
-                            scope.launch { app.engine.logAsNeeded(row.medicine.id) }
+                            // Inside the medicine's minimum gap, a second dose needs a deliberate yes.
+                            if (row.notBefore?.isAfter(Instant.now()) == true) tooSoon = row else logAsNeeded(row)
                         })
                     }
                 }
@@ -407,6 +412,24 @@ fun TodayScreen(onAddMedicine: () -> Unit, onOpenReliability: () -> Unit) {
                     TextButton(onClick = { choosing = null }) { Text("Cancel") }
                 }
             },
+        )
+    }
+
+    tooSoon?.let { row ->
+        AlertDialog(
+            onDismissRequest = { tooSoon = null },
+            title = { Text("Too soon for ${row.medicine.name}") },
+            text = {
+                Text(
+                    listOfNotNull(
+                        row.lastTaken?.let { "Last taken ${it.friendlyDateTime()}." },
+                        row.notBefore?.let { "The next dose shouldn't be before ${it.friendlyDateTime().removePrefix("Today, ")}." },
+                        "Log a dose anyway?",
+                    ).joinToString(" "),
+                )
+            },
+            confirmButton = { TextButton(onClick = { logAsNeeded(row); tooSoon = null }) { Text("Log anyway") } },
+            dismissButton = { TextButton(onClick = { tooSoon = null }) { Text("Cancel") } },
         )
     }
 
