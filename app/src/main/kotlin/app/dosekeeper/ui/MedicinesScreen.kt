@@ -2,6 +2,7 @@ package app.dosekeeper.ui
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -48,6 +49,9 @@ fun MedicinesScreen(onEdit: (Long) -> Unit) {
     val archived = visible.filter { it.medStatus == MedStatus.ARCHIVED }
 
     Scaffold(
+        // The app's outer frame already keeps clear of the status and navigation bars. Leaving
+        // room for them again here wasted a strip at each end, most of the screen when sideways.
+        contentWindowInsets = WindowInsets(0),
         floatingActionButton = {
             FloatingActionButton(onClick = { onEdit(0) }, shape = CircleShape, containerColor = MaterialTheme.colorScheme.primary) {
                 Icon(Icons.Filled.Add, "Add medicine")

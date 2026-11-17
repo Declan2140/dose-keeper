@@ -18,6 +18,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -216,6 +217,9 @@ fun TodayScreen(onAddMedicine: () -> Unit, onOpenReliability: () -> Unit) {
     // and the add button moves into it instead of floating over the list.
     val compact = LocalConfiguration.current.screenHeightDp < 480
     Scaffold(
+        // The app's outer frame already keeps clear of the status and navigation bars. Leaving
+        // room for them again here wasted a strip at each end, most of the screen when sideways.
+        contentWindowInsets = WindowInsets(0),
         snackbarHost = { SnackbarHost(snackbar) },
         floatingActionButton = {
             if (!compact) {
@@ -259,7 +263,7 @@ fun TodayScreen(onAddMedicine: () -> Unit, onOpenReliability: () -> Unit) {
             }
             item(key = "days") {
                 Column(Modifier.listMotion(motion, 0, reduced, changesWithDay = false)) {
-                    DayStrip(today, selected = day, onSelect = { day = it })
+                    DayStrip(today, selected = day, onSelect = { day = it }, compact = compact)
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 }
             }
@@ -291,7 +295,7 @@ fun TodayScreen(onAddMedicine: () -> Unit, onOpenReliability: () -> Unit) {
                         selected = profileFilter,
                         label = { id -> profiles.firstOrNull { it.id == id }?.name ?: "Everyone" },
                         onSelect = { profileFilter = it },
-                        modifier = moving(reduced).listMotion(motion, 0, reduced, changesWithDay = false).padding(start = 16.dp, end = 16.dp, top = 16.dp),
+                        modifier = moving(reduced).listMotion(motion, 0, reduced, changesWithDay = false).padding(start = 16.dp, end = 16.dp, top = if (compact) 8.dp else 16.dp),
                     )
                 }
             }
