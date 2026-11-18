@@ -134,4 +134,43 @@ class DoseTrackerTest {
         val (after, _) = DoseTracker.answer(ending, s, DoseStatus.TAKEN, at("2026-03-02T20:00"), zone)
         assertNull(after.nextDue)
     }
+
+    @Test fun `snoozing a dose that is not due yet never pulls it earlier`() {
+        val s = DoseTracker.start(twiceDaily, at("2026-03-02T19:00"), zone)
+        val snoozed = DoseTracker.snooze(s, at("2026-03-02T19:00"), 10)
+        assertEquals("2026-03-02T20:10", local(snoozed.alarmAt))
+        assertEquals("2026-03-02T20:00", local(snoozed.nextDue))
+    }
+
+    @Test fun `alarm is never set before the dose is due`() {
+        val early = TrackerState(anchor = null, nextDue = at("2026-03-02T23:30"), snoozedUntil = at("2026-03-02T22:04"))
+        assertEquals("2026-03-02T23:30", local(early.alarmAt))
+    }
+
+    @Test fun `an early alarm clears a stale snooze instead of firing again and again`() {
+        val early = TrackerState(anchor = null, nextDue = at("2026-03-02T23:30"), snoozedUntil = at("2026-03-02T22:04"))
+        val fired = DoseTracker.alarmFired(early, at("2026-03-02T22:04"), 10)
+        assertFalse(fired.isDue)
+        assertNull(fired.state.snoozedUntil)
+        assertEquals("2026-03-02T23:30", local(fired.state.alarmAt))
+    }
+
+    @Test fun `a taken fixed dose stays taken after a time zone change and back`() {
+        val la = ZoneId.of("America/Los_Angeles")
+        val s = DoseTracker.start(twiceDaily, at("2026-03-02T07:00"), zone)
+        val (taken, _) = DoseTracker.answer(twiceDaily, s, DoseStatus.TAKEN, at("2026-03-02T08:05"), zone)
+        // Flying west: 8:00 in Los Angeles must not come back as a new dose.
+        val west = DoseTracker.zoneChanged(twiceDaily, taken, zone, la)
+        assertEquals("2026-03-02T20:00", west.nextDue!!.atZone(la).toLocalDateTime().toString())
+        assertTrue(DoseTracker.catchUp(twiceDaily, west, at("2026-03-02T11:00"), la).second.isEmpty())
+        // And back home again.
+        val home = DoseTracker.zoneChanged(twiceDaily, west, la, zone)
+        assertEquals("2026-03-02T20:00", local(home.nextDue))
+    }
+
+    @Test fun `interval doses are not moved by a time zone change`() {
+        val s = DoseTracker.start(sixHourly, at("2026-03-02T11:00"), zone)
+        val moved = DoseTracker.zoneChanged(sixHourly, s, zone, ZoneId.of("Europe/London"))
+        assertEquals(s.nextDue, moved.nextDue)
+    }
 }

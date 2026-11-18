@@ -8,6 +8,7 @@ import android.content.Intent
 import android.media.RingtoneManager
 import android.net.Uri
 import android.text.format.DateFormat
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -103,6 +104,12 @@ private class Form {
     var supplyLeft by mutableStateOf("")
     var perDose by mutableStateOf("1")
 
+    /** Everything the user can change, to tell whether leaving would lose edits. */
+    fun signature(): String = listOf(
+        name, strength, form, note, kind, times.toList(), days, weekdays.toSet(), everyN, dayOfMonth, startDate, endDate,
+        intervalHours, firstDose, quiet, quietStart, quietEnd, gapHours, soundUri, tracking, supplyLeft, perDose,
+    ).joinToString("|")
+
     fun load(med: Medicine) {
         name = med.name; strength = med.strength; form = med.medForm; note = med.note; profileId = med.profileId; soundUri = med.soundUri
         tracking = med.tracksSupply
@@ -180,12 +187,28 @@ fun EditMedicineScreen(medicineId: Long, onDone: () -> Unit, onAddProfile: () ->
     var loaded by remember { mutableStateOf(medicineId == 0L) }
     var error by remember { mutableStateOf<String?>(null) }
     var confirmArchive by remember { mutableStateOf(false) }
+    var baseline by remember { mutableStateOf<String?>(null) }
+    var confirmLeave by remember { mutableStateOf(false) }
 
     LaunchedEffect(medicineId) {
         if (medicineId != 0L) {
             app.db.medicines().get(medicineId)?.let { existing = it; form.load(it) }
             loaded = true
         }
+        baseline = form.signature()
+    }
+    // Back with unsaved edits asks first, instead of quietly throwing them away.
+    val edited = baseline != null && form.signature() != baseline
+    val leave: () -> Unit = { if (edited) { confirmLeave = true } else { onDone() } }
+    BackHandler(enabled = edited) { confirmLeave = true }
+    if (confirmLeave) {
+        AlertDialog(
+            onDismissRequest = { confirmLeave = false },
+            title = { Text("Discard changes?") },
+            text = { Text("What you've entered here hasn't been saved.") },
+            confirmButton = { TextButton(onClick = { confirmLeave = false; onDone() }) { Text("Discard") } },
+            dismissButton = { TextButton(onClick = { confirmLeave = false }) { Text("Keep editing") } },
+        )
     }
     LaunchedEffect(profiles) {
         if (form.profileId == null && profiles.isNotEmpty()) form.profileId = profiles.first().id
@@ -197,7 +220,7 @@ fun EditMedicineScreen(medicineId: Long, onDone: () -> Unit, onAddProfile: () ->
         topBar = {
             TopAppBar(
                 title = { Text(if (existing == null) "Add medicine" else "Edit medicine") },
-                navigationIcon = { IconButton(onClick = onDone) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
+                navigationIcon = { IconButton(onClick = leave) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
             )
         },
     ) { padding ->

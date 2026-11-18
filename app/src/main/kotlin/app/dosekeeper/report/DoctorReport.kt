@@ -271,7 +271,8 @@ class DoctorReport(private val context: Context, private val db: AppDatabase) {
         private val DAY = DateTimeFormatter.ofPattern("EEEE d MMMM", Locale.getDefault())
         private val TIME = DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT)
 
-        fun fileName(profile: Profile, to: LocalDate): String =
-            "countertop-report-${profile.name.lowercase().replace(Regex("[^a-z0-9]+"), "-").trim('-').ifEmpty { "report" }}-$to.pdf"
+        /** "countertop-report-me-30-days-2026-11-12.pdf", so reports for different periods don't overwrite each other. */
+        fun fileName(profile: Profile, days: Long, to: LocalDate): String =
+            "countertop-report-${profile.name.lowercase().replace(Regex("[^a-z0-9]+"), "-").trim('-').ifEmpty { "report" }}-$days-days-$to.pdf"
     }
 }

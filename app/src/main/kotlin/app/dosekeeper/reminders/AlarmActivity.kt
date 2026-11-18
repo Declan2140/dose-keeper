@@ -36,6 +36,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.Hyphens
+import androidx.compose.ui.text.style.LineBreak
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -53,10 +55,19 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /** The full-screen alarm, shown over the lock screen when a dose is due. */
 class AlarmActivity : ComponentActivity() {
+
+    /**
+     * Doses answered on this screen. Clearing a notification takes a moment to reach the system,
+     * so these are left out of "what's still ringing" rather than trusting the list straight away.
+     */
+    private val answered = mutableSetOf<Long>()
+
+    private fun stillRinging(): List<Long> = app.notifier.ringingDoseIds().filter { it !in answered }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -84,9 +95,18 @@ class AlarmActivity : ComponentActivity() {
                         val med = app.db.medicines().get(id)
                         if (med?.nextDueAt == null) finish() else loaded = med to app.db.profiles().get(med.profileId)
                     }
+                    // Others ringing at the same time are dealt with next, one after another.
+                    var waiting by remember(id) { mutableStateOf(0) }
+                    LaunchedEffect(id) {
+                        // Another alarm can start ringing while this one is showing.
+                        while (true) {
+                            waiting = stillRinging().count { it != id }
+                            delay(2_000)
+                        }
+                    }
                     loaded?.let { (med, profile) ->
                         DoseAlarm(
-                            med, profile,
+                            med, profile, waiting,
                             onAnswer = { act(id) { app.engine.answer(id, it) } },
                             onSnooze = { act(id) { app.engine.snooze(id) } },
                         )
@@ -100,7 +120,10 @@ class AlarmActivity : ComponentActivity() {
         lifecycleScope.launch {
             block()
             app.notifier.cancelDose(id)
-            finish()
+            // Two medicines due together: answering one brings up the next instead of closing.
+            answered += id
+            val next = stillRinging().firstOrNull { it != id }
+            if (next != null) render(AlarmActivity.intent(this@AlarmActivity, next)) else finish()
         }
     }
 
@@ -127,6 +150,7 @@ class AlarmActivity : ComponentActivity() {
 private fun DoseAlarm(
     med: Medicine,
     profile: Profile?,
+    waiting: Int,
     onAnswer: (DoseStatus) -> Unit,
     onSnooze: () -> Unit,
 ) {
@@ -137,10 +161,12 @@ private fun DoseAlarm(
     val marker = if (is24h) null else due?.format(DateTimeFormatter.ofPattern("a", Locale.getDefault()))
     AlarmScreen(
         topLine = profile?.let { "For ${it.name}" },
+        // Shown by the buttons: the next alarm's own pop-up can cover the top of the screen.
+        footer = when (waiting) { 0 -> null; 1 -> "1 more medicine due after this"; else -> "$waiting more medicines due after this" },
         clock = clock,
         marker = marker,
         title = med.name,
-        detail = listOf(med.strength, med.medForm.label.lowercase()).filter { it.isNotBlank() }.joinToString(" "),
+        detail = listOf(med.strength, med.medForm.label).filter { it.isNotBlank() }.joinToString(" "),
         note = med.note,
         bottle = Bottle.of(med.medForm),
     ) {
@@ -189,6 +215,7 @@ private fun TestAlarm(onDone: () -> Unit) {
 @Composable
 private fun AlarmScreen(
     topLine: String?,
+    footer: String? = null,
     clock: String?,
     marker: String?,
     title: String,
@@ -209,7 +236,10 @@ private fun AlarmScreen(
             maxShown = 1,
         )
         Column(
-            Modifier.fillMaxSize().safeDrawingPadding().padding(start = 24.dp, end = 24.dp, top = 40.dp, bottom = 32.dp),
+            // The alarm's own notification pops up over the top of the screen, so on a tall screen
+            // the clock starts below it.
+            Modifier.fillMaxSize().safeDrawingPadding()
+                .padding(start = 24.dp, end = 24.dp, top = if (maxHeight > 600.dp) 112.dp else 24.dp, bottom = 32.dp),
             verticalArrangement = Arrangement.SpaceBetween,
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -222,11 +252,24 @@ private fun AlarmScreen(
                 }
             }
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(title, style = MaterialTheme.typography.displaySmall, color = Color.White)
+                // Long names step down a size and break between words, never mid-word.
+                val titleStyle = when {
+                    title.length > 22 -> MaterialTheme.typography.headlineMedium
+                    title.length > 12 -> MaterialTheme.typography.headlineLarge
+                    else -> MaterialTheme.typography.displaySmall
+                }
+                Text(
+                    title,
+                    style = titleStyle.copy(lineBreak = LineBreak.Heading, hyphens = Hyphens.Auto),
+                    color = Color.White,
+                )
                 if (detail.isNotBlank()) Text(detail, fontSize = 21.sp, lineHeight = 28.sp, color = Color(0xFFD1D5DB))
                 if (note.isNotBlank()) Text(note, fontSize = 18.sp, lineHeight = 26.sp, color = Color(0xFF9CA3AF), modifier = Modifier.padding(top = 8.dp))
             }
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp), content = buttons)
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                if (footer != null) Text(footer, fontSize = 17.sp, color = Color(0xFF9CA3AF), modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
+                buttons()
+            }
         }
     }
 }

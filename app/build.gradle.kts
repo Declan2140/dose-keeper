@@ -19,6 +19,14 @@ android {
     }
 
     signingConfigs {
+        // One fixed debug key in the repo, so each CI build installs over the last one and keeps
+        // the app's data. Debug builds only; it has nothing to do with the Play upload key.
+        getByName("debug") {
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
         create("release") {
             // Filled in by CI from repository secrets. Without them the release build is unsigned.
             val storeFilePath = System.getenv("DK_KEYSTORE_PATH")

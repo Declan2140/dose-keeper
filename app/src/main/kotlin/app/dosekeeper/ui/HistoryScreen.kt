@@ -189,6 +189,7 @@ private fun DoctorReportFlow(profiles: List<app.dosekeeper.data.Profile>, initia
     var profileId by remember { mutableStateOf(initialProfile ?: profiles.firstOrNull()?.id) }
     var range by remember { mutableStateOf(ReportRange.MONTH) }
     var saved by remember { mutableStateOf<android.net.Uri?>(null) }
+    var savedName by remember { mutableStateOf("countertop-report.pdf") }
     var working by remember { mutableStateOf(false) }
     val profile = profiles.firstOrNull { it.id == profileId }
     val to = remember { java.time.LocalDate.now() }
@@ -217,18 +218,26 @@ private fun DoctorReportFlow(profiles: List<app.dosekeeper.data.Profile>, initia
             confirmButton = {
                 Row {
                     TextButton(onClick = {
-                        val share = Intent(Intent.ACTION_SEND).setType("application/pdf")
-                            .putExtra(Intent.EXTRA_STREAM, done)
-                            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                        runCatching { context.startActivity(Intent.createChooser(share, "Share report")) }
-                        onDone()
+                        // Share a copy under the report's own name: a saved document's link often ends
+                        // in a bare number, which some apps would use as the file name.
+                        scope.launch {
+                            runCatching {
+                                val uri = shareableCopy(context, done, savedName)
+                                val share = Intent(Intent.ACTION_SEND).setType("application/pdf")
+                                    .putExtra(Intent.EXTRA_STREAM, uri)
+                                    .putExtra(Intent.EXTRA_SUBJECT, savedName.removeSuffix(".pdf"))
+                                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                share.clipData = android.content.ClipData.newUri(context.contentResolver, savedName, uri)
+                                context.startActivity(Intent.createChooser(share, "Share report"))
+                            }.onFailure { Toast.makeText(context, "Couldn't share the report: ${it.message}", Toast.LENGTH_LONG).show() }
+                        }
                     }) { Text("Share") }
                     TextButton(onClick = {
                         val view = Intent(Intent.ACTION_VIEW).setDataAndType(done, "application/pdf")
                             .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                         runCatching { context.startActivity(view) }
                             .onFailure { Toast.makeText(context, "No app to open PDFs. Try Share instead.", Toast.LENGTH_LONG).show() }
-                        onDone()
+                        // Stays open, so Share is still there after checking the report.
                     }) { Text("Open") }
                 }
             },
@@ -252,9 +261,27 @@ private fun DoctorReportFlow(profiles: List<app.dosekeeper.data.Profile>, initia
         confirmButton = {
             TextButton(
                 enabled = profile != null && !working,
-                onClick = { profile?.let { saver.launch(DoctorReport.fileName(it, to)) } },
+                onClick = {
+                    profile?.let {
+                        savedName = DoctorReport.fileName(it, range.days, to)
+                        saver.launch(savedName)
+                    }
+                },
             ) { Text(if (working) "Making…" else "Save PDF") }
         },
         dismissButton = { TextButton(onClick = onDone) { Text("Cancel") } },
     )
 }
+
+/** Copies the saved report into the app's share folder under [name] and returns a link other apps can read. */
+private suspend fun shareableCopy(context: android.content.Context, source: android.net.Uri, name: String): android.net.Uri =
+    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        val dir = java.io.File(context.cacheDir, "reports").apply { mkdirs() }
+        dir.listFiles()?.forEach { it.delete() }
+        val file = java.io.File(dir, name)
+        context.contentResolver.openInputStream(source).use { input ->
+            requireNotNull(input) { "The saved report can't be read" }
+            file.outputStream().use { input.copyTo(it) }
+        }
+        androidx.core.content.FileProvider.getUriForFile(context, context.packageName + ".files", file)
+    }
