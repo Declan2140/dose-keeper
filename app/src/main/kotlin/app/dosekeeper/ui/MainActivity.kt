@@ -10,7 +10,14 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.AnimatedContentTransitionScope
 import androidx.compose.animation.AnimatedContentTransitionScope.SlideDirection
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.VisibilityThreshold
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.ui.platform.compositionContext
+import androidx.compose.ui.platform.createLifecycleAwareWindowRecomposer
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -53,21 +60,42 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        keepAnimationsAtFullSpeed()
         setContent {
-            DoseKeeperTheme {
-                var onboarded by remember { mutableStateOf(app.settings.onboardingDone) }
-                var justOnboarded by remember { mutableStateOf(false) }
-                if (!onboarded) {
-                    Onboarding(onFinished = {
-                        app.settings.onboardingDone = true
-                        justOnboarded = true
-                        onboarded = true
-                    })
-                } else {
-                    AppNav(startOnAdd = justOnboarded)
+            // Checked each time the app comes to the front, in case the setting was just changed.
+            var reducedMotion by remember { mutableStateOf(animationsRemoved()) }
+            LifecycleResumeEffect(Unit) {
+                reducedMotion = animationsRemoved()
+                onPauseOrDispose { }
+            }
+            CompositionLocalProvider(LocalReducedMotion provides reducedMotion) {
+                DoseKeeperTheme {
+                    var onboarded by remember { mutableStateOf(app.settings.onboardingDone) }
+                    var justOnboarded by remember { mutableStateOf(false) }
+                    if (!onboarded) {
+                        Onboarding(onFinished = {
+                            app.settings.onboardingDone = true
+                            justOnboarded = true
+                            onboarded = true
+                        })
+                    } else {
+                        AppNav(startOnAdd = justOnboarded)
+                    }
                 }
             }
         }
+    }
+
+    /**
+     * The phone's "Remove animations" setting works by setting the animation speed to zero, which
+     * would make every change in the app snap, short fades included. This screen runs its own
+     * animations at normal speed instead, and [LocalReducedMotion] swaps anything that moves for a
+     * fade, so the setting is still honored: nothing slides, grows or bounces.
+     */
+    @OptIn(ExperimentalComposeUiApi::class)
+    private fun keepAnimationsAtFullSpeed() {
+        val root = window.decorView
+        root.compositionContext = root.createLifecycleAwareWindowRecomposer(FullSpeed, lifecycle)
     }
 
     override fun onResume() {
@@ -106,12 +134,13 @@ private fun AnimatedContentTransitionScope<NavBackStackEntry>.slideDirection(bac
     return if (target > initial || (target == initial && !back)) SlideDirection.Left else SlideDirection.Right
 }
 
-private val slide = tween<IntOffset>(300)
+private val slide = Motion.smooth(IntOffset.VisibilityThreshold)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AppNav(startOnAdd: Boolean) {
     val nav = rememberNavController()
+    val reduced = LocalReducedMotion.current
     val entry by nav.currentBackStackEntryAsState()
     val route = entry?.destination?.route
     val tab = Tab.entries.firstOrNull { it.route == route }
@@ -169,10 +198,12 @@ private fun AppNav(startOnAdd: Boolean) {
             nav,
             startDestination = "today",
             modifier = Modifier.padding(padding),
-            enterTransition = { slideIntoContainer(slideDirection(), slide) },
-            exitTransition = { slideOutOfContainer(slideDirection(), slide) },
-            popEnterTransition = { slideIntoContainer(slideDirection(back = true), slide) },
-            popExitTransition = { slideOutOfContainer(slideDirection(back = true), slide) },
+            // Screens slide on a spring, so going back partway through turns round smoothly. With
+            // animations removed they fade into each other instead.
+            enterTransition = { if (reduced) fadeIn(Motion.fade()) else slideIntoContainer(slideDirection(), slide) },
+            exitTransition = { if (reduced) fadeOut(Motion.fade()) else slideOutOfContainer(slideDirection(), slide) },
+            popEnterTransition = { if (reduced) fadeIn(Motion.fade()) else slideIntoContainer(slideDirection(back = true), slide) },
+            popExitTransition = { if (reduced) fadeOut(Motion.fade()) else slideOutOfContainer(slideDirection(back = true), slide) },
         ) {
             composable("today") {
                 TodayScreen(onAddMedicine = { nav.navigate("edit/0") }, onOpenReliability = { nav.navigate("reliability") })

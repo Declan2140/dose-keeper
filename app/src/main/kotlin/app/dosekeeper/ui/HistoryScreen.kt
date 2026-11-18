@@ -50,7 +50,9 @@ fun HistoryScreen() {
     val cutoff = remember(unlocked) {
         if (unlocked) 0L else Instant.now().minus(Duration.ofDays(UnlockManager.FREE_HISTORY_DAYS)).toEpochMilli()
     }
-    val logs by app.db.doseLogs().observeSince(cutoff).collectAsState(initial = emptyList())
+    // Null until the first read comes back, so "No doses recorded yet" isn't flashed while loading.
+    val loadedLogs by app.db.doseLogs().observeSince(cutoff).collectAsState(initial = null)
+    val logs = loadedLogs.orEmpty()
     val olderCount by app.db.doseLogs().observeCountBefore(cutoff).collectAsState(initial = 0)
     val medicines by app.db.medicines().observeAll().collectAsState(initial = emptyList())
     val profiles by app.db.profiles().observeAll().collectAsState(initial = emptyList())
@@ -97,7 +99,7 @@ fun HistoryScreen() {
                 ChoiceChips(listOf<Long?>(null) + medOptions.map { it.id }, medicineFilter, { id -> medById[id]?.name ?: "All medicines" }, { medicineFilter = it })
             }
         }
-        if (byDay.isEmpty()) item { Text("No doses recorded yet.", Modifier.padding(vertical = 24.dp)) }
+        if (byDay.isEmpty() && loadedLogs != null) item { Text("No doses recorded yet.", Modifier.padding(vertical = 24.dp)) }
         byDay.forEach { (day, dayLogs) ->
             item(key = "day-$day") {
                 val taken = dayLogs.count { it.doseStatus == DoseStatus.TAKEN }

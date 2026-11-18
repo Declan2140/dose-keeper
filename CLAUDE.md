@@ -24,6 +24,16 @@ namespace `app.dosekeeper`. See `README.md` for the layout and how reminders sta
   still due today.
 - In-app Snooze buttons just say "Snooze". Only the notification button says the length.
 
+## Motion rules
+
+- Animate only scale, position and opacity, set inside `graphicsLayer { }`. Never animate a width,
+  height, padding or color: those make the screen measure or rebuild itself on every frame.
+- Use the shared springs in `ui/Motion.kt` rather than fixed timers, so a second tap partway
+  through reverses smoothly.
+- Anything that slides, grows or bounces needs a fade for people who turned on the phone's "Remove
+  animations" setting. Read `LocalReducedMotion` and use `Motion.fade()` in its place.
+- Dose rows on Today are rounded cards (`CardShape`, `cardColor()`), with no divider lines.
+
 ## Accessibility (WCAG 2.2 AA)
 
 - Touch targets are at least 48dp. Give buttons `heightIn(min = …)`, not a fixed height, so text

@@ -29,7 +29,15 @@ data class TodayDose(
 
 data class AsNeededRow(val medicine: Medicine, val profile: Profile?, val lastTaken: Instant?, val notBefore: Instant?)
 
-data class TodayModel(val doses: List<TodayDose>, val asNeeded: List<AsNeededRow>) {
+data class TodayModel(
+    val doses: List<TodayDose>,
+    val asNeeded: List<AsNeededRow>,
+    /**
+     * On a coming day only: medicines on a repeating timer ("every 8 hours"). Their times depend on
+     * when the dose before is actually taken, so they can't be listed by the clock yet.
+     */
+    val timed: List<Pair<Medicine, Profile?>> = emptyList(),
+) {
     /** Medicines with a dose still to take today, soonest first. One bottle each on the counter. */
     val remaining: List<Medicine> =
         doses.filter { it.status == null }.sortedBy { it.due }.map { it.medicine }.distinctBy { it.id }
@@ -104,4 +112,62 @@ fun buildToday(
     doses.sortWith(compareByDescending<TodayDose> { it.overdue }.thenBy { it.due }.thenBy { it.medicine.name.lowercase() })
     asNeeded.sortBy { it.medicine.name.lowercase() }
     return TodayModel(doses, asNeeded)
+}
+
+/**
+ * Builds a day other than today, to look at but not to change: what was taken, skipped or missed
+ * on a past [date], or what is scheduled on a coming one.
+ */
+fun buildDay(
+    medicines: List<Medicine>,
+    profiles: List<Profile>,
+    logs: List<DoseLog>,
+    profileFilter: Long?,
+    date: LocalDate,
+    now: Instant,
+    zone: ZoneId = ZoneId.systemDefault(),
+): TodayModel {
+    val byId = profiles.associateBy { it.id }
+    val dayStart = date.atStartOfDay(zone).toInstant().toEpochMilli()
+    val dayEnd = date.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
+    val coming = date.isAfter(now.atZone(zone).toLocalDate())
+    val logsByMed = logs.groupBy { it.medicineId }
+    val doses = mutableListOf<TodayDose>()
+    val timed = mutableListOf<Pair<Medicine, Profile?>>()
+
+    for (med in medicines) {
+        if (profileFilter != null && med.profileId != profileFilter) continue
+        val profile = byId[med.profileId]
+        val schedule = runCatching { med.parsedSchedule }.getOrNull() ?: continue
+        if (schedule is Schedule.AsNeeded) continue
+
+        val shown = mutableSetOf<Long>()
+        for (log in logsByMed[med.id].orEmpty()) {
+            val due = log.dueAt ?: continue
+            if (due < dayStart || due >= dayEnd) continue
+            shown += due
+            doses += TodayDose(med, profile, Instant.ofEpochMilli(due), log.doseStatus, actionable = false, overdue = false, snoozedUntil = null, at = Instant.ofEpochMilli(log.actionAt))
+        }
+        // A past day shows only what was recorded. Anything still open belongs to Today.
+        if (!coming || !med.isActive) continue
+        val next = med.nextDueAt ?: continue
+
+        if (next in dayStart until dayEnd && next !in shown) {
+            shown += next
+            doses += TodayDose(med, profile, Instant.ofEpochMilli(next), null, actionable = false, overdue = false, snoozedUntil = null)
+        }
+        when (schedule) {
+            is Schedule.FixedTimes -> for (due in DoseCalculator.fixedDosesOn(schedule, date, zone)) {
+                val ms = due.toEpochMilli()
+                if (ms in shown || ms <= next) continue
+                doses += TodayDose(med, profile, due, null, actionable = false, overdue = false, snoozedUntil = null)
+            }
+            is Schedule.Interval -> if (shown.isEmpty()) timed += med to profile
+            is Schedule.AsNeeded -> {}
+        }
+    }
+
+    doses.sortWith(compareBy<TodayDose> { it.due }.thenBy { it.medicine.name.lowercase() })
+    timed.sortBy { it.first.name.lowercase() }
+    return TodayModel(doses, emptyList(), timed)
 }
