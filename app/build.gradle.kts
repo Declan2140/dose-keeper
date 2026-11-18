@@ -7,13 +7,13 @@ plugins {
 
 android {
     namespace = "app.dosekeeper"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "app.countertop"
         minSdk = 26
-        targetSdk = 35
-        versionCode = 1
+        targetSdk = 36
+        versionCode = 2
         versionName = "1.0.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -96,7 +96,7 @@ dependencies {
     implementation("androidx.work:work-runtime-ktx:2.10.0")
     implementation("androidx.glance:glance-appwidget:1.1.1")
     implementation("androidx.documentfile:documentfile:1.0.1")
-    implementation("com.android.billingclient:billing-ktx:7.1.1")
+    implementation("com.android.billingclient:billing-ktx:8.0.0")
 
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation(composeBom)
