@@ -50,6 +50,17 @@ object DoseCalculator {
     }
 
     /**
+     * Fixed doses from earlier on the day a medicine was added, at or before [addedAt]. They never
+     * get an alarm and are never logged as missed, but Today still shows them so a dose already
+     * taken this morning can be marked. Empty once that day is over.
+     */
+    fun passedBeforeAdded(schedule: Schedule.FixedTimes, addedAt: Instant, now: Instant, zone: ZoneId): List<Instant> {
+        val day = addedAt.atZone(zone).toLocalDate()
+        if (day != now.atZone(zone).toLocalDate()) return emptyList()
+        return fixedDosesOn(schedule, day, zone).filter { !it.isAfter(addedAt) }
+    }
+
+    /**
      * When the next interval dose is due. [anchor] is when the previous dose was taken, or for a
      * skipped or missed dose, when that dose was due. Null anchor means no dose yet, so the first
      * dose time applies. The result may be in the past, which means the dose is overdue.

@@ -1,9 +1,11 @@
 package app.dosekeeper.reminders
 
 import androidx.room.withTransaction
+import app.dosekeeper.core.DoseCalculator
 import app.dosekeeper.core.DoseRecord
 import app.dosekeeper.core.DoseStatus
 import app.dosekeeper.core.DoseTracker
+import app.dosekeeper.core.Schedule
 import app.dosekeeper.core.Supply
 import app.dosekeeper.data.AppDatabase
 import app.dosekeeper.data.DoseLog
@@ -88,6 +90,25 @@ class ReminderEngine(
     }
 
     /**
+     * Marks a dose from earlier today, before the medicine was added (see
+     * DoseCalculator.passedBeforeAdded). The medicine's current dose and its alarm are untouched.
+     */
+    suspend fun answerBeforeAdded(medicineId: Long, dueAt: Long, status: DoseStatus) = change {
+        val med = db.medicines().get(medicineId) ?: return@change
+        if (!med.isActive || dueAt > med.createdAt || status == DoseStatus.MISSED) return@change
+        val schedule = med.parsedSchedule as? Schedule.FixedTimes ?: return@change
+        val now = Instant.now()
+        if (DoseCalculator.passedBeforeAdded(schedule, Instant.ofEpochMilli(med.createdAt), now, zone).none { it.toEpochMilli() == dueAt }) return@change
+        val updated = if (status == DoseStatus.TAKEN) med.used(1) else med
+        db.withTransaction {
+            val added = db.doseLogs().insert(DoseLog(medicineId = medicineId, dueAt = dueAt, status = status.name, actionAt = now.toEpochMilli()))
+            // Already answered (a double tap): leave the supply as it was.
+            if (added != -1L && updated != med) db.medicines().update(updated)
+        }
+        checkSupply(updated)
+    }
+
+    /**
      * Unchecks a taken or skipped dose, making it the current dose again. Only the medicine's
      * latest dose can be unchecked, so the doses after it are still worked out in order.
      */
@@ -96,6 +117,17 @@ class ReminderEngine(
         if (!med.isActive) return@change
         val log = db.doseLogs().lastScheduled(medicineId) ?: return@change
         if (log.dueAt != dueAt || log.doseStatus == DoseStatus.MISSED) return@change
+        // A dose from before the medicine was added was never the current dose, so unchecking it
+        // just removes the answer.
+        if (med.parsedSchedule is Schedule.FixedTimes && dueAt <= med.createdAt) {
+            val updated = if (log.doseStatus == DoseStatus.TAKEN) med.used(-1) else med
+            db.withTransaction {
+                db.doseLogs().delete(log)
+                if (updated != med) db.medicines().update(updated)
+            }
+            checkSupply(updated)
+            return@change
+        }
         val schedule = runCatching { med.parsedSchedule }.getOrNull() ?: return@change
         var updated = med.withTracker(DoseTracker.undo(schedule, Instant.ofEpochMilli(dueAt), Instant.now(), settings.snoozeMinutes))
         if (log.doseStatus == DoseStatus.TAKEN) updated = updated.used(-1)

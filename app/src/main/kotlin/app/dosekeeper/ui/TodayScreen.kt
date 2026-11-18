@@ -40,7 +40,6 @@ import androidx.compose.material.icons.filled.Snooze
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -187,7 +186,8 @@ fun TodayScreen(onAddMedicine: () -> Unit, onOpenReliability: () -> Unit) {
         // The Taken buzz is held for a moment so it's felt just as the tick lands.
         if (status == DoseStatus.TAKEN) scope.launch { delay(Motion.TICK_LANDS_MS); haptics.taken() } else haptics.soft()
         scope.launch {
-            app.engine.answer(dose.medicine.id, status)
+            if (dose.beforeAdded) app.engine.answerBeforeAdded(dose.medicine.id, dose.due.toEpochMilli(), status)
+            else app.engine.answer(dose.medicine.id, status)
             // Every answer can be taken back for a few seconds, in case of a slip of the thumb.
             snackbar.currentSnackbarData?.dismiss()
             val what = if (status == DoseStatus.TAKEN) "taken" else "skipped"
@@ -221,17 +221,11 @@ fun TodayScreen(onAddMedicine: () -> Unit, onOpenReliability: () -> Unit) {
         // room for them again here wasted a strip at each end, most of the screen when sideways.
         contentWindowInsets = WindowInsets(0),
         snackbarHost = { SnackbarHost(snackbar) },
-        floatingActionButton = {
-            if (!compact) {
-                FloatingActionButton(onClick = onAddMedicine, shape = CircleShape, containerColor = MaterialTheme.colorScheme.primary) {
-                    Icon(Icons.Filled.Add, "Add medicine")
-                }
-            }
-        },
     ) { padding ->
         LazyColumn(
             Modifier.fillMaxSize().padding(padding),
-            contentPadding = PaddingValues(bottom = if (compact) 16.dp else 96.dp),
+            // The add button sits in the header, so nothing floats over the doses' tick circles.
+            contentPadding = PaddingValues(bottom = 16.dp),
         ) {
             // Rows that belong to the day on show. They rise in as the app opens, slide when the
             // day changes, and glide to their new place when a dose is answered.
@@ -411,7 +405,8 @@ fun TodayScreen(onAddMedicine: () -> Unit, onOpenReliability: () -> Unit) {
                 Column(horizontalAlignment = Alignment.End) {
                     TextButton(onClick = { answer(dose, DoseStatus.TAKEN); choosing = null }) { Text("Taken") }
                     // Only a dose that's due can be snoozed. Snoozing one that isn't would just delay it.
-                    if (!dose.due.isAfter(Instant.now())) TextButton(onClick = { snooze(dose); choosing = null }) { Text("Snooze") }
+                    // A dose from before the medicine was added has no alarm to snooze.
+                    if (!dose.beforeAdded && !dose.due.isAfter(Instant.now())) TextButton(onClick = { snooze(dose); choosing = null }) { Text("Snooze") }
                     TextButton(onClick = { answer(dose, DoseStatus.SKIPPED); choosing = null }) { Text("Skip") }
                     TextButton(onClick = { choosing = null }) { Text("Cancel") }
                 }
@@ -564,7 +559,7 @@ private fun Hero(
         maxShown = if (largeText) 1 else 3,
     ) {
         Column(
-            Modifier.padding(start = 24.dp, top = 32.dp, end = if (largeText) 112.dp else 24.dp, bottom = 40.dp)
+            Modifier.padding(start = 24.dp, top = 32.dp, end = if (largeText) 112.dp else 72.dp, bottom = 40.dp)
                 .listMotion(motion, 0, reduced, travel = 0.12f),
         ) {
             Text(date.format(heroDate), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -613,6 +608,13 @@ private fun Hero(
                 }
             }
         }
+        // Adding a medicine lives up here rather than in a floating button, which used to cover
+        // the tick circle of whichever dose scrolled underneath it.
+        androidx.compose.material3.FilledIconButton(
+            onClick = onAdd,
+            modifier = Modifier.align(Alignment.TopEnd).padding(top = 24.dp, end = 12.dp).size(48.dp)
+                .listMotion(motion, 0, reduced, changesWithDay = false),
+        ) { Icon(Icons.Filled.Add, "Add medicine") }
     }
 }
 
@@ -815,7 +817,7 @@ private fun DoseRowContent(
                 DoseStatus.TAKEN -> "Due $time"
                 DoseStatus.SKIPPED -> "Due $time, skipped"
                 DoseStatus.MISSED -> "Due $time, missed"
-                null -> listOfNotNull(time, dose.profile?.name.takeIf { showPerson }).joinToString(", ") +
+                null -> listOfNotNull(time, dose.profile?.name.takeIf { showPerson }, "before you added it".takeIf { dose.beforeAdded }).joinToString(", ") +
                     (dose.snoozedUntil?.let { ", rings again at ${it.localTime()}" } ?: "")
             }
             Text(sub, style = MaterialTheme.typography.bodySmall, color = if (dose.status == DoseStatus.MISSED) scheme.error else scheme.onSurfaceVariant)

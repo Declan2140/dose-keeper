@@ -33,6 +33,23 @@ class DayViewTest {
     private fun log(med: Long, due: Instant, status: DoseStatus, at: Instant = due) =
         DoseLog(medicineId = med, dueAt = due.toEpochMilli(), actionAt = at.toEpochMilli(), status = status.name)
 
+    @Test fun `a medicine added after its morning dose still shows that dose today`() {
+        val added = twiceDaily(1, "Amoxicillin", at(20)).copy(createdAt = at(10).toEpochMilli())
+        val day = buildToday(listOf(added), listOf(me), emptyList(), null, noon, zone)
+        assertEquals(listOf(at(8), at(20)), day.doses.map { it.due })
+        val morning = day.doses.first()
+        assertTrue(morning.beforeAdded && morning.actionable && !morning.overdue)
+        assertTrue(!day.doses.last().beforeAdded)
+    }
+
+    @Test fun `a dose from before the medicine was added shows as done once answered`() {
+        val added = twiceDaily(1, "Amoxicillin", at(20)).copy(createdAt = at(10).toEpochMilli())
+        val logs = listOf(log(1, at(8), DoseStatus.TAKEN, at(10, 5)))
+        val day = buildToday(listOf(added), listOf(me), logs, null, noon, zone)
+        assertEquals(listOf(DoseStatus.TAKEN, null), day.doses.sortedBy { it.due }.map { it.status })
+        assertEquals(1, day.doses.count { it.beforeAdded || it.status != null })
+    }
+
     @Test fun `a past day shows what was recorded and nothing can be changed`() {
         val yesterday = today.minusDays(1)
         val logs = listOf(
