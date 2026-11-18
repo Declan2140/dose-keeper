@@ -85,8 +85,9 @@ fun buildWidgetView(medicines: List<Medicine>, profiles: List<Profile>, logs: Li
         .filter { it.status == DoseStatus.TAKEN && it.at != null }
         .maxByOrNull { it.at!! }
         ?.let { "${it.medicine.name}, ${it.at!!.takenLabel().replaceFirstChar(Char::lowercase)}" }
-    // Today's list is already in order: late doses first, then by time.
-    val next = today.doses.firstOrNull { it.status == null && it.actionable }
+    // Today's list is already in order: late doses first, then by time. A dose from before the
+    // medicine was added is left to the app; the widget only shows doses with a reminder.
+    val next = today.doses.firstOrNull { it.status == null && it.actionable && !it.beforeAdded }
         ?: return WidgetView.Clear(if (today.doses.isEmpty()) "Nothing due today" else "All done for today", lastTaken)
     return WidgetView.Dose(
         medicineId = next.medicine.id,

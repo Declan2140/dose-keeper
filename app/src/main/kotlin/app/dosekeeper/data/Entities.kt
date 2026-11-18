@@ -30,14 +30,25 @@ enum class MedStatus { ACTIVE, PAUSED, ARCHIVED }
 
 /** The outline drawn for a medicine, so two medicines can be told apart at a glance. */
 enum class PillShape(val label: String) {
-    ROUND("Round tablet"), CAPSULE("Capsule"), INJECTION("Injection");
+    ROUND("Round tablet"), CAPSULE("Capsule"), INJECTION("Injection"), LIQUID("Bottle"), DROPS("Dropper");
 
     companion object {
-        /** The picture a medicine gets until one is chosen. Liquids, drops and the rest have none. */
+        /** The picture a medicine gets until one is chosen. Inhalers, creams and the rest have none. */
         fun defaultFor(form: MedForm): PillShape? = when (form) {
             MedForm.PILL -> ROUND
             MedForm.INJECTION -> INJECTION
+            MedForm.LIQUID -> LIQUID
+            MedForm.DROPS -> DROPS
             else -> null
+        }
+
+        /** The pictures that make sense for a form: a liquid is never drawn as a tablet. */
+        fun choicesFor(form: MedForm): List<PillShape> = when (form) {
+            MedForm.PILL -> listOf(ROUND, CAPSULE)
+            MedForm.INJECTION -> listOf(INJECTION)
+            MedForm.LIQUID -> listOf(LIQUID)
+            MedForm.DROPS -> listOf(DROPS)
+            else -> entries
         }
     }
 }
@@ -101,7 +112,10 @@ data class Medicine(
 
     /** The picture to draw for this medicine, or null when its form has none and none was chosen. */
     val shape: PillShape?
-        get() = pillShape?.let { runCatching { PillShape.valueOf(it) }.getOrNull() } ?: PillShape.defaultFor(medForm)
+        get() = pillShape?.let { runCatching { PillShape.valueOf(it) }.getOrNull() }
+            // A picture that doesn't suit the form (a tablet for a liquid) gives way to the usual one.
+            ?.takeIf { it in PillShape.choicesFor(medForm) }
+            ?: PillShape.defaultFor(medForm)
     val color: PillColor? get() = pillColor?.let { runCatching { PillColor.valueOf(it) }.getOrNull() }
 
     /** "blue capsule", for screen readers and anywhere the picture needs words. Null without a picture. */

@@ -188,7 +188,7 @@ private fun LooksLikeEditor(form: Form) {
     Text("A small picture next to the name, to help tell similar medicines apart.", style = MaterialTheme.typography.bodySmall)
     Spacer(Modifier.height(8.dp))
     Segmented(
-        options = listOf<PillShape?>(null) + PillShape.entries,
+        options = listOf<PillShape?>(null) + PillShape.choicesFor(form.form),
         selected = form.shape,
         label = { it?.label ?: "No picture" },
         onSelect = { form.shape = it },

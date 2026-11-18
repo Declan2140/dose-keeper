@@ -122,6 +122,25 @@ class DoseCalculatorTest {
         assertEquals("2026-06-02T08:00", local(tokyo, DoseCalculator.nextFixed(s, now, tokyo)))
     }
 
+    @Test fun `doses already past when a medicine is added the same day`() {
+        val s = fixed("08:00", "13:00", "20:00")
+        val added = at(newYork, "2026-03-02T14:50")
+        val past = DoseCalculator.passedBeforeAdded(s, added, at(newYork, "2026-03-02T15:00"), newYork)
+        assertEquals(listOf("2026-03-02T08:00", "2026-03-02T13:00"), past.map { local(newYork, it) })
+    }
+
+    @Test fun `doses past when added are forgotten the next day`() {
+        val s = fixed("08:00")
+        val added = at(newYork, "2026-03-02T14:50")
+        assertTrue(DoseCalculator.passedBeforeAdded(s, added, at(newYork, "2026-03-03T07:00"), newYork).isEmpty())
+    }
+
+    @Test fun `nothing past when the medicine starts on a later day`() {
+        val s = fixed("08:00", start = "2026-03-05")
+        val added = at(newYork, "2026-03-02T14:50")
+        assertTrue(DoseCalculator.passedBeforeAdded(s, added, at(newYork, "2026-03-02T15:00"), newYork).isEmpty())
+    }
+
     @Test fun `doses on a day`() {
         val s = fixed("20:00", "08:00", days = DayRule.DaysOfWeek(setOf(DayOfWeek.MONDAY)))
         val doses = DoseCalculator.fixedDosesOn(s, LocalDate.parse("2026-03-02"), newYork).map { local(newYork, it) }

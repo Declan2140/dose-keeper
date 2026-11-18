@@ -98,8 +98,10 @@ class AlarmActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        concealed = app.notifier.namesHidden()
-        if (!concealed) reveal()
+        // Coming back to the screen can hide the name again, but never shows it: once this screen
+        // covers the lock screen the phone can look unlocked when it isn't. The name appears only
+        // after a real unlock (the receiver above, or unlockToReveal).
+        if (app.notifier.namesHidden()) concealed = true
     }
 
     /** The phone is unlocked: the notification in the shade gets the medicine's name back too. */
@@ -148,9 +150,16 @@ class AlarmActivity : ComponentActivity() {
                     // Others ringing at the same time are dealt with next, one after another.
                     var waiting by remember(id) { mutableStateOf(0) }
                     LaunchedEffect(id) {
-                        // Another alarm can start ringing while this one is showing.
                         while (true) {
+                            // Another alarm can start ringing while this one is showing.
                             waiting = stillRinging().count { it != id }
+                            // The dose may have been answered somewhere else meanwhile: from the
+                            // notification, the widget or the app. Then this screen has done its job.
+                            val shown = loaded?.first
+                            if (shown != null && answeredElsewhere(shown)) {
+                                moveOn(id)
+                                break
+                            }
                             delay(2_000)
                         }
                     }
@@ -172,11 +181,23 @@ class AlarmActivity : ComponentActivity() {
         lifecycleScope.launch {
             block()
             app.notifier.cancelDose(id)
-            // Two medicines due together: answering one brings up the next instead of closing.
-            answered += id
-            val next = stillRinging().firstOrNull { it != id }
-            if (next != null) render(AlarmActivity.intent(this@AlarmActivity, next)) else finish()
+            moveOn(id)
         }
+    }
+
+    /** Two medicines due together: answering one brings up the next instead of closing. */
+    private fun moveOn(id: Long) {
+        answered += id
+        val next = stillRinging().firstOrNull { it != id }
+        if (next != null) render(AlarmActivity.intent(this, next)) else finish()
+    }
+
+    /** True once the dose on screen was taken, skipped or snoozed without this screen. */
+    private suspend fun answeredElsewhere(shown: Medicine): Boolean {
+        val now = app.db.medicines().get(shown.id) ?: return true
+        if (now.nextDueAt != shown.nextDueAt) return true
+        val snoozed = now.snoozedUntil ?: return false
+        return snoozed != shown.snoozedUntil && snoozed > System.currentTimeMillis()
     }
 
     @Suppress("DEPRECATION")

@@ -25,6 +25,11 @@ data class TodayDose(
     val at: Instant? = null,
     /** A taken or skipped dose that can still be unchecked: the medicine's latest answer. */
     val undoable: Boolean = false,
+    /**
+     * A dose from earlier today, before the medicine was added. It has no alarm and is never
+     * counted as missed, but can still be marked taken or skipped.
+     */
+    val beforeAdded: Boolean = false,
 )
 
 data class AsNeededRow(val medicine: Medicine, val profile: Profile?, val lastTaken: Instant?, val notBefore: Instant?)
@@ -97,6 +102,17 @@ fun buildToday(
             shown += next
             val due = Instant.ofEpochMilli(next)
             doses += TodayDose(med, profile, due, null, actionable = true, overdue = due.isBefore(now), snoozedUntil = med.snoozedUntil?.let(Instant::ofEpochMilli))
+        }
+
+        // Doses earlier today, from before the medicine was added: a morning dose already taken
+        // can still be marked. They aren't reminded, and they drop off at midnight.
+        if (schedule is Schedule.FixedTimes) {
+            for (due in DoseCalculator.passedBeforeAdded(schedule, Instant.ofEpochMilli(med.createdAt), now, zone)) {
+                val ms = due.toEpochMilli()
+                if (ms in shown) continue
+                shown += ms
+                doses += TodayDose(med, profile, due, null, actionable = true, overdue = false, snoozedUntil = null, beforeAdded = true)
+            }
         }
 
         // Later fixed doses today, shown so the day can be seen at a glance.

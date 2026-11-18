@@ -38,13 +38,14 @@ private val spoken = DateTimeFormatter.ofPattern("EEEE d MMMM", Locale.getDefaul
  * it is from [today], negative for the past.
  */
 @Composable
-fun DayStrip(today: LocalDate, selected: Int, onSelect: (Int) -> Unit, modifier: Modifier = Modifier) {
+fun DayStrip(today: LocalDate, selected: Int, onSelect: (Int) -> Unit, modifier: Modifier = Modifier, compact: Boolean = false) {
     val scheme = MaterialTheme.colorScheme
     // With the phone's text made large, "Today" and "Wed" no longer fit seven across, so the
     // weekdays shrink to a letter. TalkBack still hears the whole date.
     val narrow = LocalDensity.current.fontScale >= 1.3f
     Row(
-        modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp).selectableGroup(),
+        // Sideways the screen is short, so the strip sits tighter and leaves room for the doses.
+        modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = if (compact) 2.dp else 8.dp).selectableGroup(),
         horizontalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         for (offset in -DAYS_EACH_WAY..DAYS_EACH_WAY) {
@@ -56,7 +57,7 @@ fun DayStrip(today: LocalDate, selected: Int, onSelect: (Int) -> Unit, modifier:
                 else -> date.dayOfWeek.getDisplayName(TextStyle.SHORT, Locale.getDefault())
             }
             Column(
-                Modifier.weight(1f).heightIn(min = 56.dp)
+                Modifier.weight(1f).heightIn(min = if (compact) 48.dp else 56.dp)
                     .clip(RoundedCornerShape(18.dp))
                     .background(if (on) scheme.primary else Color.Transparent)
                     .selectable(selected = on, role = Role.Tab, onClick = { onSelect(offset) })
