@@ -4,6 +4,7 @@ import androidx.room.withTransaction
 import app.dosekeeper.core.DoseRecord
 import app.dosekeeper.core.DoseStatus
 import app.dosekeeper.core.DoseTracker
+import app.dosekeeper.core.Supply
 import app.dosekeeper.data.AppDatabase
 import app.dosekeeper.data.DoseLog
 import app.dosekeeper.data.Medicine
@@ -38,8 +39,11 @@ class ReminderEngine(
             else DoseTracker.scheduleChanged(med.parsedSchedule, existing.tracker, now, zone)
             med = med.withTracker(state)
         }
+        // A changed count means the user has just looked at it, so warn again only if it's still low later.
+        if (existing != null && (existing.supplyLeft != med.supplyLeft || existing.perDose != med.perDose)) med = med.copy(lowSupplyNotified = false)
         val id = if (existing == null) db.medicines().insert(med.copy(id = 0)) else med.id.also { db.medicines().update(med) }
         syncAlarm(med.copy(id = id))
+        checkSupply(med.copy(id = id), notify = false)
         id
     }
 
@@ -53,13 +57,16 @@ class ReminderEngine(
         // still counts; only doses before it are logged as missed.
         val answering = if (missed.isNotEmpty()) med.tracker.copy(nextDue = missed.last().due, snoozedUntil = null) else caught
         val (next, record) = DoseTracker.answer(schedule, answering, status, now, zone)
+        var updated = med.withTracker(next)
+        if (status == DoseStatus.TAKEN) updated = updated.used(1)
         db.withTransaction {
             log(medicineId, missed.dropLast(if (missed.isNotEmpty()) 1 else 0))
             log(medicineId, listOf(record))
-            db.medicines().update(med.withTracker(next))
+            db.medicines().update(updated)
         }
         notifier.cancelDose(medicineId)
-        syncAlarm(med.withTracker(next))
+        syncAlarm(updated)
+        checkSupply(updated)
     }
 
     /**
@@ -72,13 +79,15 @@ class ReminderEngine(
         val log = db.doseLogs().lastScheduled(medicineId) ?: return@withLock
         if (log.dueAt != dueAt || log.doseStatus == DoseStatus.MISSED) return@withLock
         val schedule = runCatching { med.parsedSchedule }.getOrNull() ?: return@withLock
-        val updated = med.withTracker(DoseTracker.undo(schedule, Instant.ofEpochMilli(dueAt), Instant.now(), settings.snoozeMinutes))
+        var updated = med.withTracker(DoseTracker.undo(schedule, Instant.ofEpochMilli(dueAt), Instant.now(), settings.snoozeMinutes))
+        if (log.doseStatus == DoseStatus.TAKEN) updated = updated.used(-1)
         db.withTransaction {
             db.doseLogs().delete(log)
             db.medicines().update(updated)
         }
         notifier.cancelDose(medicineId)
         syncAlarm(updated)
+        checkSupply(updated)
     }
 
     suspend fun snooze(medicineId: Long, minutes: Int = settings.snoozeMinutes) = lock.withLock {
@@ -91,7 +100,40 @@ class ReminderEngine(
     }
 
     suspend fun logAsNeeded(medicineId: Long) = lock.withLock {
-        log(medicineId, listOf(DoseTracker.logAsNeeded(Instant.now())))
+        val med = db.medicines().get(medicineId) ?: return@withLock
+        val updated = med.used(1)
+        db.withTransaction {
+            log(medicineId, listOf(DoseTracker.logAsNeeded(Instant.now())))
+            if (updated != med) db.medicines().update(updated)
+        }
+        checkSupply(updated)
+    }
+
+    /**
+     * Changes a history entry's status, or deletes it when [status] is null, keeping the
+     * supply count in step: a dose that becomes taken uses supply, one that stops being taken gives it back.
+     */
+    suspend fun editLog(entry: DoseLog, status: DoseStatus?) = lock.withLock {
+        val med = db.medicines().get(entry.medicineId)
+        val wasTaken = entry.doseStatus == DoseStatus.TAKEN
+        val nowTaken = status == DoseStatus.TAKEN
+        val change = (if (nowTaken) 1 else 0) - (if (wasTaken) 1 else 0)
+        val updated = med?.used(change)
+        db.withTransaction {
+            if (status == null) db.doseLogs().delete(entry)
+            else db.doseLogs().update(entry.copy(status = status.name, actionAt = if (nowTaken) entry.dueAt ?: entry.actionAt else entry.actionAt))
+            if (updated != null && updated != med) db.medicines().update(updated)
+        }
+        updated?.let { checkSupply(it) }
+    }
+
+    /** Adds a refill of [amount] to the supply and remembers the size for next time. */
+    suspend fun refill(medicineId: Long, amount: Double) = lock.withLock {
+        val med = db.medicines().get(medicineId) ?: return@withLock
+        if (amount <= 0) return@withLock
+        val updated = med.copy(supplyLeft = (med.supplyLeft ?: 0.0) + amount, refillSize = amount)
+        db.medicines().update(updated)
+        checkSupply(updated)
     }
 
     suspend fun setStatus(medicineId: Long, status: MedStatus) = lock.withLock {
@@ -104,6 +146,7 @@ class ReminderEngine(
         db.medicines().update(updated)
         notifier.cancelDose(medicineId)
         syncAlarm(updated)
+        checkSupply(updated, notify = false)
     }
 
     /** An alarm went off: log anything missed, then ring if a dose is due. */
@@ -170,6 +213,37 @@ class ReminderEngine(
         db.doseLogs().insertAll(
             records.map { DoseLog(medicineId = medicineId, dueAt = it.due?.toEpochMilli(), status = it.status.name, actionAt = it.at.toEpochMilli()) },
         )
+    }
+
+    /** Supply after [doses] more doses were taken (negative gives them back). Untracked medicines are unchanged. */
+    private fun Medicine.used(doses: Int): Medicine {
+        val left = supplyLeft ?: return this
+        if (doses == 0) return this
+        return copy(supplyLeft = (left - doses * perDose).coerceAtLeast(0.0))
+    }
+
+    /**
+     * Shows "running low" once when a medicine first drops into the warning range, and re-arms the
+     * warning once it's back above it (after a refill). [notify] false only records the state.
+     */
+    private suspend fun checkSupply(med: Medicine, notify: Boolean = true) {
+        val left = med.supplyLeft
+        if (left == null || !med.isActive) {
+            notifier.cancelLowSupply(med.id)
+            return
+        }
+        val schedule = runCatching { med.parsedSchedule }.getOrNull() ?: return
+        val outlook = Supply.outlook(schedule, left, med.perDose, med.nextDueAt?.let(Instant::ofEpochMilli), Instant.now(), zone)
+        when {
+            outlook.low && !med.lowSupplyNotified -> {
+                if (notify) notifier.showLowSupply(med, outlook, db.profiles().get(med.profileId))
+                db.medicines().update(med.copy(lowSupplyNotified = true))
+            }
+            !outlook.low && med.lowSupplyNotified -> {
+                notifier.cancelLowSupply(med.id)
+                db.medicines().update(med.copy(lowSupplyNotified = false))
+            }
+        }
     }
 
     private fun syncAlarm(med: Medicine) {

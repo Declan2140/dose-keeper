@@ -146,6 +146,7 @@ class BackupManager(
 
 private fun JSONArray.objects(): List<JSONObject> = (0 until length()).map { getJSONObject(it) }
 private fun JSONObject.optLongOrNull(key: String): Long? = if (has(key) && !isNull(key)) getLong(key) else null
+private fun JSONObject.optDoubleOrNull(key: String): Double? = if (has(key) && !isNull(key)) getDouble(key) else null
 private fun JSONObject.optStringOrNull(key: String): String? = if (has(key) && !isNull(key)) getString(key) else null
 
 private fun Profile.toJson() = JSONObject()
@@ -161,6 +162,7 @@ private fun Medicine.toJson() = JSONObject()
     .put("form", form).put("note", note).put("schedule", schedule).put("status", status)
     .put("anchorAt", anchorAt ?: JSONObject.NULL).put("nextDueAt", nextDueAt ?: JSONObject.NULL)
     .put("soundUri", soundUri ?: JSONObject.NULL).put("createdAt", createdAt)
+    .put("supplyLeft", supplyLeft ?: JSONObject.NULL).put("perDose", perDose).put("refillSize", refillSize ?: JSONObject.NULL)
 
 private fun medicineFrom(o: JSONObject) = Medicine(
     id = o.getLong("id"), profileId = o.getLong("profileId"), name = o.getString("name"),
@@ -168,6 +170,8 @@ private fun medicineFrom(o: JSONObject) = Medicine(
     schedule = o.getString("schedule"), status = o.optString("status", "ACTIVE"),
     anchorAt = o.optLongOrNull("anchorAt"), nextDueAt = o.optLongOrNull("nextDueAt"), snoozedUntil = null,
     soundUri = o.optStringOrNull("soundUri"), createdAt = o.optLong("createdAt", System.currentTimeMillis()),
+    supplyLeft = o.optDoubleOrNull("supplyLeft"), perDose = o.optDouble("perDose", 1.0).takeIf { it > 0 } ?: 1.0,
+    refillSize = o.optDoubleOrNull("refillSize"),
 )
 
 private fun DoseLog.toJson() = JSONObject()

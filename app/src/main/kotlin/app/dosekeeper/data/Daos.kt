@@ -80,6 +80,10 @@ interface DoseLogDao {
     @Query("SELECT * FROM dose_logs WHERE medicineId = :medicineId AND dueAt IS NOT NULL ORDER BY dueAt DESC LIMIT 1")
     suspend fun lastScheduled(medicineId: Long): DoseLog?
 
+    /** Everything recorded from [from] up to [to], oldest first. Used by the doctor report. */
+    @Query("SELECT * FROM dose_logs WHERE COALESCE(dueAt, actionAt) >= :from AND COALESCE(dueAt, actionAt) < :to ORDER BY COALESCE(dueAt, actionAt)")
+    suspend fun between(from: Long, to: Long): List<DoseLog>
+
     @Query("SELECT COUNT(*) FROM dose_logs WHERE COALESCE(dueAt, actionAt) < :before")
     fun observeCountBefore(before: Long): Flow<Int>
 

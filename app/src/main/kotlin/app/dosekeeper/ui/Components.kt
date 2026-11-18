@@ -162,7 +162,7 @@ fun UnlockDialog(reason: String, onDismiss: () -> Unit) {
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(reason)
-                Text("One payment of ${price ?: "$5"}, no subscription. It unlocks unlimited people and pets, full history, custom alarm sounds, and future features like refills and PDF export.")
+                Text("One payment of ${price ?: "$5"}, no subscription. It unlocks unlimited people and pets, full history, custom alarm sounds, refill tracking and doctor reports.")
                 Text("Reminders, backups and every schedule type stay free for everyone.", style = MaterialTheme.typography.bodySmall)
             }
         },

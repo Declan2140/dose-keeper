@@ -2,6 +2,8 @@ package app.dosekeeper.ui
 
 import app.dosekeeper.core.DayRule
 import app.dosekeeper.core.Schedule
+import app.dosekeeper.core.Supply
+import app.dosekeeper.reminders.Notifier
 import java.time.DayOfWeek
 import java.time.Instant
 import java.time.LocalDate
@@ -63,4 +65,22 @@ fun Schedule.describe(): String = when (this) {
     }
     is Schedule.Interval -> "Every ${hours(every.toMinutes())}" + (quietHours?.let { ", paused ${it.start.short()} to ${it.end.short()}" } ?: "")
     is Schedule.AsNeeded -> "As needed" + (minGap?.let { ", at most every ${hours(it.toMinutes())}" } ?: "")
+}
+
+/** "12 pills left, until about Tue 25 Nov" */
+fun supplyLine(outlook: Supply.Outlook, unit: String, left: Double): String {
+    val amount = "${Notifier.formatAmount(left)} $unit left"
+    val runsOut = outlook.runsOut ?: return amount
+    return when (outlook.daysLeft) {
+        0L -> "$amount, runs out today"
+        1L -> "$amount, runs out tomorrow"
+        else -> "$amount, lasts until about ${runsOut.friendly()}"
+    }
+}
+
+/** Refill outlook for a stored medicine, or null when its supply isn't tracked. */
+fun app.dosekeeper.data.Medicine.supplyOutlook(now: Instant = Instant.now()): Supply.Outlook? {
+    val left = supplyLeft ?: return null
+    val schedule = runCatching { parsedSchedule }.getOrNull() ?: return null
+    return Supply.outlook(schedule, left, perDose, nextDueAt?.let(Instant::ofEpochMilli), now, ZoneId.systemDefault())
 }

@@ -1,5 +1,9 @@
 package app.dosekeeper.ui
 
+import android.content.Intent
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -13,6 +17,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -29,6 +34,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import app.dosekeeper.app
+import app.dosekeeper.report.DoctorReport
 import app.dosekeeper.billing.UnlockManager
 import app.dosekeeper.core.DoseStatus
 import app.dosekeeper.data.DoseLog
@@ -52,6 +58,8 @@ fun HistoryScreen() {
     var medicineFilter by rememberSaveable { mutableStateOf<Long?>(null) }
     var editing by remember { mutableStateOf<DoseLog?>(null) }
     var showUnlock by remember { mutableStateOf(false) }
+    var unlockReason by remember { mutableStateOf("") }
+    var askReport by remember { mutableStateOf(false) }
 
     val medById = medicines.associateBy { it.id }
     val profileById = profiles.associateBy { it.id }
@@ -66,7 +74,15 @@ fun HistoryScreen() {
         contentPadding = PaddingValues(start = 24.dp, end = 24.dp, top = 32.dp, bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        item { Text("History", style = MaterialTheme.typography.headlineLarge, modifier = Modifier.padding(bottom = 8.dp)) }
+        item {
+            Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("History", style = MaterialTheme.typography.headlineLarge, modifier = Modifier.weight(1f))
+                OutlinedButton(onClick = {
+                    if (unlocked) askReport = true
+                    else { unlockReason = "Doctor reports are part of the unlock."; showUnlock = true }
+                }) { Text("Doctor report") }
+            }
+        }
         if (profiles.size > 1) {
             item {
                 Segmented(listOf<Long?>(null) + profiles.map { it.id }, profileFilter, { id -> profileById[id]?.name ?: "Everyone" }, {
@@ -96,7 +112,7 @@ fun HistoryScreen() {
         }
         if (!unlocked && olderCount > 0) {
             item {
-                Card(Modifier.fillMaxWidth().padding(top = 12.dp).clickable { showUnlock = true }) {
+                Card(Modifier.fillMaxWidth().padding(top = 12.dp).clickable { unlockReason = "Free history covers the last ${UnlockManager.FREE_HISTORY_DAYS} days."; showUnlock = true }) {
                     Text("$olderCount older entries are kept safely on your phone. The unlock shows your full history.", Modifier.padding(16.dp))
                 }
             }
@@ -112,13 +128,13 @@ fun HistoryScreen() {
                 Column(horizontalAlignment = Alignment.End) {
                     DoseStatus.entries.filter { it != log.doseStatus }.forEach { status ->
                         TextButton(onClick = {
-                            scope.launch { app.db.doseLogs().update(log.copy(status = status.name, actionAt = if (status == DoseStatus.TAKEN) log.dueAt ?: log.actionAt else log.actionAt)) }
+                            scope.launch { app.engine.editLog(log, status) }
                             editing = null
                         }) { Text("Mark ${status.label()}") }
                     }
                     if (log.dueAt == null) {
                         TextButton(onClick = {
-                            scope.launch { app.db.doseLogs().delete(log) }
+                            scope.launch { app.engine.editLog(log, null) }
                             editing = null
                         }) { Text("Delete") }
                     }
@@ -127,7 +143,8 @@ fun HistoryScreen() {
             },
         )
     }
-    if (showUnlock) UnlockDialog("Free history covers the last ${UnlockManager.FREE_HISTORY_DAYS} days.", onDismiss = { showUnlock = false })
+    if (showUnlock) UnlockDialog(unlockReason, onDismiss = { showUnlock = false })
+    if (askReport) DoctorReportFlow(profiles, profileFilter, onDone = { askReport = false })
 }
 
 private fun DoseStatus.label() = when (this) {
@@ -154,4 +171,90 @@ private fun HistoryRow(log: DoseLog, name: String, profile: app.dosekeeper.data.
         }
         Text(log.doseStatus.label().replaceFirstChar { it.uppercase() }, color = color, style = MaterialTheme.typography.labelLarge)
     }
+}
+
+private enum class ReportRange(val label: String, val days: Long) {
+    WEEK("Last 7 days", 7), MONTH("Last 30 days", 30), QUARTER("Last 90 days", 90)
+}
+
+/**
+ * Doctor report (unlock feature): pick who and how far back, choose where to save the PDF,
+ * then open or share it. Opening hands it to the phone's PDF viewer, which can also print.
+ */
+@Composable
+private fun DoctorReportFlow(profiles: List<app.dosekeeper.data.Profile>, initialProfile: Long?, onDone: () -> Unit) {
+    val context = LocalContext.current
+    val app = context.app
+    val scope = rememberCoroutineScope()
+    var profileId by remember { mutableStateOf(initialProfile ?: profiles.firstOrNull()?.id) }
+    var range by remember { mutableStateOf(ReportRange.MONTH) }
+    var saved by remember { mutableStateOf<android.net.Uri?>(null) }
+    var working by remember { mutableStateOf(false) }
+    val profile = profiles.firstOrNull { it.id == profileId }
+    val to = remember { java.time.LocalDate.now() }
+
+    val saver = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/pdf")) { uri ->
+        val who = profile
+        if (uri == null || who == null) return@rememberLauncherForActivityResult
+        working = true
+        scope.launch {
+            runCatching { app.report.write(uri, who, to.minusDays(range.days - 1), to) }
+                .onSuccess { saved = uri }
+                .onFailure {
+                    Toast.makeText(context, "Couldn't make the report: ${it.message}", Toast.LENGTH_LONG).show()
+                    onDone()
+                }
+            working = false
+        }
+    }
+
+    val done = saved
+    if (done != null) {
+        AlertDialog(
+            onDismissRequest = onDone,
+            title = { Text("Report saved") },
+            text = { Text("Open it to check or print, or share it with your doctor, pharmacist or vet.") },
+            confirmButton = {
+                Row {
+                    TextButton(onClick = {
+                        val share = Intent(Intent.ACTION_SEND).setType("application/pdf")
+                            .putExtra(Intent.EXTRA_STREAM, done)
+                            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        runCatching { context.startActivity(Intent.createChooser(share, "Share report")) }
+                        onDone()
+                    }) { Text("Share") }
+                    TextButton(onClick = {
+                        val view = Intent(Intent.ACTION_VIEW).setDataAndType(done, "application/pdf")
+                            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        runCatching { context.startActivity(view) }
+                            .onFailure { Toast.makeText(context, "No app to open PDFs. Try Share instead.", Toast.LENGTH_LONG).show() }
+                        onDone()
+                    }) { Text("Open") }
+                }
+            },
+            dismissButton = { TextButton(onClick = onDone) { Text("Close") } },
+        )
+        return
+    }
+
+    AlertDialog(
+        onDismissRequest = onDone,
+        title = { Text("Doctor report") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("A PDF of the medicines, how many doses were taken, skipped or missed, and every dose in the period.", style = MaterialTheme.typography.bodySmall)
+                if (profiles.size > 1) {
+                    ChoiceChips(profiles.map { it.id }, profileId, { id -> profiles.firstOrNull { it.id == id }?.name ?: "" }, { profileId = it })
+                }
+                ChoiceChips(ReportRange.entries, range, { it.label }, { range = it })
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = profile != null && !working,
+                onClick = { profile?.let { saver.launch(DoctorReport.fileName(it, to)) } },
+            ) { Text(if (working) "Making…" else "Save PDF") }
+        },
+        dismissButton = { TextButton(onClick = onDone) { Text("Cancel") } },
+    )
 }

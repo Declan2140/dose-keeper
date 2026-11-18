@@ -16,6 +16,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import app.dosekeeper.R
+import app.dosekeeper.core.Supply
 import app.dosekeeper.data.Medicine
 import app.dosekeeper.data.Profile
 import java.time.Instant
@@ -153,6 +154,21 @@ class Notifier(private val context: Context) {
         )
     }
 
+    /** "Running low on Lisinopril: about 5 days left." Opens the app, where Today has a Refilled button. */
+    fun showLowSupply(medicine: Medicine, outlook: Supply.Outlook, profile: Profile?) {
+        val left = formatAmount(medicine.supplyLeft ?: 0.0) + " " + medicine.medForm.unit
+        val text = when (val days = outlook.daysLeft) {
+            null -> "$left left."
+            0L -> "$left left. It runs out today."
+            1L -> "$left left, about 1 day's worth."
+            else -> "$left left, about $days days' worth."
+        }
+        val who = profile?.name?.let { " ($it)" } ?: ""
+        showStatus(lowSupplyId(medicine.id), "Time to refill ${medicine.name}$who", "$text Order a refill soon.")
+    }
+
+    fun cancelLowSupply(medicineId: Long) = manager.cancel(lowSupplyId(medicineId))
+
     fun cancelDose(medicineId: Long) = manager.cancel(notificationId(medicineId))
     fun cancelTest() = manager.cancel(TEST_NOTIFICATION_ID)
 
@@ -170,6 +186,11 @@ class Notifier(private val context: Context) {
         const val BACKUP_NOTIFICATION_ID = 999_998
 
         fun notificationId(medicineId: Long): Int = medicineId.toInt()
+        fun lowSupplyId(medicineId: Long): Int = 1_000_000 + medicineId.toInt()
+
+        /** 30, 12.5, 0.25: no trailing zeros. */
+        fun formatAmount(amount: Double): String =
+            if (amount % 1.0 == 0.0) amount.toLong().toString() else "%.2f".format(amount).trimEnd('0').trimEnd('.')
 
         /** The sound's display name, like "Morning Glory", or null if it can't be read. */
         fun soundTitle(context: Context, uri: Uri): String? =

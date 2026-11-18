@@ -61,6 +61,7 @@ import app.dosekeeper.core.DayRule
 import app.dosekeeper.core.QuietHours
 import app.dosekeeper.core.Schedule
 import app.dosekeeper.core.ScheduleCodec
+import app.dosekeeper.core.Supply
 import app.dosekeeper.data.MedForm
 import app.dosekeeper.data.MedStatus
 import app.dosekeeper.data.Medicine
@@ -98,9 +99,15 @@ private class Form {
     var quietEnd by mutableStateOf(LocalTime.of(7, 0))
     var gapHours by mutableStateOf("")
     var soundUri by mutableStateOf<String?>(null)
+    var tracking by mutableStateOf(false)
+    var supplyLeft by mutableStateOf("")
+    var perDose by mutableStateOf("1")
 
     fun load(med: Medicine) {
         name = med.name; strength = med.strength; form = med.medForm; note = med.note; profileId = med.profileId; soundUri = med.soundUri
+        tracking = med.tracksSupply
+        supplyLeft = med.supplyLeft?.let(Notifier::formatAmount) ?: ""
+        perDose = Notifier.formatAmount(med.perDose)
         when (val s = med.parsedSchedule) {
             is Schedule.FixedTimes -> {
                 kind = Kind.FIXED
@@ -149,6 +156,9 @@ private class Form {
         }
     }
 }
+
+/** "30", "12.5" or "12,5". Null for anything that isn't a number zero or above. */
+private fun parseAmount(text: String): Double? = text.replace(',', '.').trim().toDoubleOrNull()?.takeIf { it >= 0 && it.isFinite() }
 
 private fun parseHours(text: String): Duration? =
     text.replace(',', '.').trim().toDoubleOrNull()?.takeIf { it > 0 }?.let { Duration.ofMinutes((it * 60).toLong()) }
@@ -231,6 +241,9 @@ fun EditMedicineScreen(medicineId: Long, onDone: () -> Unit, onAddProfile: () ->
                 AlarmSoundRow(form)
             }
 
+            SectionTitle("Supply")
+            SupplyEditor(form, existing)
+
             val summary = form.schedule().getOrNull()?.describe()
             val who = profiles.firstOrNull { it.id == form.profileId }?.name
             if (summary != null && form.name.isNotBlank()) {
@@ -253,6 +266,8 @@ fun EditMedicineScreen(medicineId: Long, onDone: () -> Unit, onAddProfile: () ->
                         name.isEmpty() -> "Enter the medicine's name."
                         profileId == null -> "Choose who it's for."
                         schedule.isFailure -> schedule.exceptionOrNull()?.message ?: "Check the schedule."
+                        form.tracking && parseAmount(form.supplyLeft) == null -> "Enter how much is left, or turn off supply tracking."
+                        form.tracking && (parseAmount(form.perDose) ?: 0.0) <= 0.0 -> "Enter how much one dose uses, for example 1 or 2."
                         else -> null
                     }
                     if (error != null) return@Button
@@ -261,6 +276,8 @@ fun EditMedicineScreen(medicineId: Long, onDone: () -> Unit, onAddProfile: () ->
                     val updated = base.copy(
                         name = name, strength = form.strength.trim(), form = form.form.name, note = form.note.trim(),
                         profileId = profileId!!, schedule = encoded, soundUri = form.soundUri,
+                        supplyLeft = if (form.tracking) parseAmount(form.supplyLeft) else null,
+                        perDose = if (form.tracking) parseAmount(form.perDose)!! else base.perDose,
                     )
                     scope.launch {
                         app.engine.save(updated, scheduleChanged = existing?.schedule != encoded)
@@ -431,4 +448,56 @@ private fun AlarmSoundRow(form: Form) {
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
     if (showUnlock) UnlockDialog("Custom alarm sounds are part of the unlock.", onDismiss = { showUnlock = false })
+}
+
+/**
+ * Refill tracking (unlock feature). The count goes down by [Form.perDose] each time a dose is
+ * marked taken, and the app warns about a week before it runs out.
+ */
+@Composable
+private fun SupplyEditor(form: Form, existing: Medicine?) {
+    val context = LocalContext.current
+    val unlocked by context.app.unlock.unlocked.collectAsState()
+    var showUnlock by remember { mutableStateOf(false) }
+    val unit = form.form.unit
+
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text("Track supply")
+            Text(
+                "Counts down as you take it and reminds you to refill about a week before it runs out.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Switch(form.tracking, { on ->
+            if (on && !unlocked) showUnlock = true else form.tracking = on
+        })
+    }
+    if (form.tracking) {
+        Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Field(
+                form.supplyLeft, { form.supplyLeft = it }, label = { Text("Left now ($unit)") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true, modifier = Modifier.weight(1f),
+            )
+            Field(
+                form.perDose, { form.perDose = it }, label = { Text("Per dose") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true, modifier = Modifier.weight(1f),
+            )
+        }
+        val left = parseAmount(form.supplyLeft)
+        val per = parseAmount(form.perDose)?.takeIf { it > 0 }
+        val schedule = form.schedule().getOrNull()
+        if (left != null && per != null && schedule != null) {
+            val nextDue = existing?.takeIf { it.schedule == ScheduleCodec.encode(schedule) }?.nextDueAt?.let(java.time.Instant::ofEpochMilli)
+            val outlook = Supply.outlook(schedule, left, per, nextDue, java.time.Instant.now(), ZoneId.systemDefault())
+            Text(
+                supplyLine(outlook, unit, left),
+                style = MaterialTheme.typography.bodySmall,
+                color = if (outlook.low) Overdue else MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 6.dp),
+            )
+        }
+    }
+    if (showUnlock) UnlockDialog("Refill tracking is part of the unlock.", onDismiss = { showUnlock = false })
 }
