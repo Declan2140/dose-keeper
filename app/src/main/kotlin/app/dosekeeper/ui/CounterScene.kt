@@ -1,13 +1,30 @@
 package app.dosekeeper.ui
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.MutableTransitionState
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkHorizontally
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
@@ -18,23 +35,30 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import app.dosekeeper.data.MedForm
 
 /** The container drawn on the counter for each medicine. */
 enum class Bottle(val widthDp: Float, val heightDp: Float) {
-    PILL(66f, 110f), LIQUID(60f, 120f), DROPPER(44f, 84f);
+    PILL(66f, 110f), LIQUID(60f, 120f), DROPPER(44f, 84f),
+    INHALER(48f, 92f), PEN(26f, 120f), TUBE(46f, 100f), BOX(70f, 64f);
 
     companion object {
         fun of(form: MedForm): Bottle = when (form) {
-            MedForm.PILL, MedForm.OTHER -> PILL
-            MedForm.LIQUID, MedForm.INJECTION -> LIQUID
+            MedForm.PILL -> PILL
+            MedForm.LIQUID -> LIQUID
             MedForm.DROPS -> DROPPER
+            MedForm.INHALER -> INHALER
+            MedForm.INJECTION -> PEN
+            MedForm.CREAM -> TUBE
+            MedForm.OTHER -> BOX
         }
     }
 }
+
+/** One container on the counter. [key] keeps it the same bottle while others come and go. */
+data class CounterItem(val key: Long, val bottle: Bottle)
 
 /** Line colors for the scene, light or dark. */
 private class SceneColors(val tile: Color, val counter: Color, val counterEdge: Color, val bottle: Color, val outline: Color, val label: Color, val ridge: Color)
@@ -50,14 +74,17 @@ private val darkScene = SceneColors(
 
 /**
  * A faint line drawing of a bathroom counter against a tiled wall, with one container for each
- * medicine in [bottles], lined up from the right. More than [maxShown] shows a "+N more" note.
+ * medicine in [items], lined up from the right. More than [maxShown] shows a "+N more" note.
+ *
+ * When a medicine leaves [items] its container lifts off the counter and fades, and the others
+ * slide over to close the gap. One that comes back drops into place.
  *
  * [counterHeight] is the strip of counter at the bottom; [scale] enlarges the bottles (the alarm
  * screen draws one big one); [endPadding] is the gap between the last bottle and the right edge.
  */
 @Composable
 fun CounterScene(
-    bottles: List<Bottle>,
+    items: List<CounterItem>,
     modifier: Modifier = Modifier,
     dark: Boolean = false,
     scale: Float = 1f,
@@ -68,24 +95,19 @@ fun CounterScene(
     content: @Composable BoxScope.() -> Unit = {},
 ) {
     val colors = if (dark) darkScene else lightScene
-    val shown = bottles.take(maxShown)
-    val extra = bottles.size - shown.size
+    val shown = items.take(maxShown)
+    val extra = items.size - shown.size
     Box(modifier) {
         Canvas(Modifier.fillMaxSize()) {
             val counterTop = size.height - counterHeight.toPx()
             drawTiles(colors, tileSize.toPx(), counterTop)
             drawRect(colors.counter, topLeft = Offset(0f, counterTop), size = Size(size.width, size.height - counterTop))
             drawLine(colors.counterEdge, Offset(0f, counterTop), Offset(size.width, counterTop), strokeWidth = 1.5.dp.toPx())
-
-            val unit = 1.dp.toPx() * scale
-            var right = size.width - endPadding.toPx()
-            for (bottle in shown.reversed()) {
-                val w = bottle.widthDp * unit
-                val h = bottle.heightDp * unit
-                translate(left = right - w, top = counterTop - h) { drawBottle(bottle, unit, colors) }
-                right -= w + 12.dp.toPx() * scale
-            }
         }
+        AnimatedBottles(
+            shown, colors, scale,
+            Modifier.align(Alignment.BottomEnd).padding(end = endPadding, bottom = counterHeight),
+        )
         if (extra > 0) {
             Text(
                 "+$extra more",
@@ -96,6 +118,70 @@ fun CounterScene(
         }
         content()
     }
+}
+
+/**
+ * The row of containers. A container that leaves stays drawn until its exit finishes, in the
+ * place it was standing, so the gap closes smoothly instead of jumping.
+ */
+@Composable
+private fun AnimatedBottles(items: List<CounterItem>, colors: SceneColors, scale: Float, modifier: Modifier) {
+    val display = remember { mutableStateListOf<CounterItem>().apply { addAll(items) } }
+    val states = remember { mutableMapOf<Long, MutableTransitionState<Boolean>>() }
+    val initialKeys = remember { items.map { it.key }.toSet() }
+    val currentKeys = items.map { it.key }.toSet()
+
+    LaunchedEffect(items) {
+        val merged = mergeKeepingDeparting(display.toList(), items)
+        if (merged != display.toList()) {
+            display.clear()
+            display.addAll(merged)
+        }
+    }
+
+    Row(modifier, verticalAlignment = Alignment.Bottom) {
+        for (item in display) {
+            key(item.key) {
+                val state = states.getOrPut(item.key) { MutableTransitionState(item.key in initialKeys) }
+                state.targetState = item.key in currentKeys
+                if (state.isIdle && !state.currentState && item.key !in currentKeys) {
+                    LaunchedEffect(Unit) {
+                        display.removeAll { it.key == item.key }
+                        states.remove(item.key)
+                    }
+                }
+                AnimatedVisibility(
+                    visibleState = state,
+                    enter = expandHorizontally(spring(stiffness = Spring.StiffnessMediumLow), expandFrom = Alignment.End, clip = false) +
+                        slideInVertically(spring(dampingRatio = 0.6f, stiffness = Spring.StiffnessMediumLow)) { -it / 3 } +
+                        fadeIn(tween(250)),
+                    exit = slideOutVertically(tween(380)) { -it / 2 } +
+                        fadeOut(tween(320)) +
+                        shrinkHorizontally(tween(320, delayMillis = 260), shrinkTowards = Alignment.End, clip = false),
+                ) {
+                    Canvas(
+                        Modifier.padding(start = 12.dp * scale)
+                            .size(item.bottle.widthDp.dp * scale, item.bottle.heightDp.dp * scale),
+                    ) {
+                        drawBottle(item.bottle, 1.dp.toPx() * scale, colors)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * The new list in order, with any item that has left kept at the position it had, so it can
+ * animate away where it stood.
+ */
+internal fun mergeKeepingDeparting(old: List<CounterItem>, new: List<CounterItem>): List<CounterItem> {
+    val newKeys = new.map { it.key }.toSet()
+    val result = new.toMutableList()
+    old.forEachIndexed { index, item ->
+        if (item.key !in newKeys) result.add(index.coerceAtMost(result.size), item)
+    }
+    return result
 }
 
 private fun DrawScope.drawTiles(colors: SceneColors, tile: Float, bottom: Float) {
@@ -124,10 +210,14 @@ private fun DrawScope.drawBottle(bottle: Bottle, u: Float, c: SceneColors) {
         drawRoundRect(c.outline, tl, sz, cr, style = line)
     }
 
-    fun path(p: Path) {
-        drawPath(p, c.bottle)
+    fun path(fill: Color = c.bottle, build: Path.() -> Unit) {
+        val p = Path().apply(build)
+        drawPath(p, fill)
         drawPath(p, c.outline, style = line)
     }
+
+    fun ridge(x1: Float, y1: Float, x2: Float, y2: Float) =
+        drawLine(c.ridge, Offset(x1 * u, y1 * u), Offset(x2 * u, y2 * u), strokeWidth = line.width)
 
     when (bottle) {
         Bottle.PILL -> {
@@ -135,23 +225,21 @@ private fun DrawScope.drawBottle(bottle: Bottle, u: Float, c: SceneColors) {
             shape(0f, 46f, 66f, 40f, 0f, c.label)
             shape(11f, 20f, 44f, 7f, 0f)
             shape(3f, 0f, 60f, 20f, 4f)
-            drawLine(c.ridge, Offset(11f * u, 6f * u), Offset(55f * u, 6f * u), strokeWidth = line.width)
-            drawLine(c.ridge, Offset(11f * u, 12f * u), Offset(55f * u, 12f * u), strokeWidth = line.width)
+            ridge(11f, 6f, 55f, 6f)
+            ridge(11f, 12f, 55f, 12f)
         }
         Bottle.LIQUID -> {
-            path(
-                Path().apply {
-                    moveTo(4f * u, 44f * u)
-                    quadraticTo(4f * u, 26f * u, 22f * u, 26f * u)
-                    lineTo(38f * u, 26f * u)
-                    quadraticTo(56f * u, 26f * u, 56f * u, 44f * u)
-                    lineTo(56f * u, 112f * u)
-                    quadraticTo(56f * u, 120f * u, 48f * u, 120f * u)
-                    lineTo(12f * u, 120f * u)
-                    quadraticTo(4f * u, 120f * u, 4f * u, 112f * u)
-                    close()
-                },
-            )
+            path {
+                moveTo(4f * u, 44f * u)
+                quadraticTo(4f * u, 26f * u, 22f * u, 26f * u)
+                lineTo(38f * u, 26f * u)
+                quadraticTo(56f * u, 26f * u, 56f * u, 44f * u)
+                lineTo(56f * u, 112f * u)
+                quadraticTo(56f * u, 120f * u, 48f * u, 120f * u)
+                lineTo(12f * u, 120f * u)
+                quadraticTo(4f * u, 120f * u, 4f * u, 112f * u)
+                close()
+            }
             shape(4f, 58f, 52f, 42f, 0f, c.label)
             shape(22f, 16f, 16f, 10f, 0f)
             shape(18f, 0f, 24f, 16f, 3f)
@@ -160,15 +248,57 @@ private fun DrawScope.drawBottle(bottle: Bottle, u: Float, c: SceneColors) {
             shape(4f, 32f, 36f, 52f, 8f)
             shape(4f, 44f, 36f, 28f, 0f, c.label)
             shape(12f, 18f, 20f, 14f, 3f)
-            path(
-                Path().apply {
-                    moveTo(18f * u, 0f)
-                    lineTo(26f * u, 0f)
-                    lineTo(28f * u, 18f * u)
-                    lineTo(16f * u, 18f * u)
-                    close()
-                },
-            )
+            path {
+                moveTo(18f * u, 0f)
+                lineTo(26f * u, 0f)
+                lineTo(28f * u, 18f * u)
+                lineTo(16f * u, 18f * u)
+                close()
+            }
+        }
+        Bottle.INHALER -> {
+            // Canister poking out of the top, then the L-shaped actuator with its mouthpiece.
+            shape(16f, 0f, 22f, 34f, 6f)
+            shape(0f, 64f, 26f, 24f, 6f)
+            shape(10f, 24f, 36f, 68f, 12f)
+            ridge(16f, 40f, 40f, 40f)
+            ridge(4f, 70f, 4f, 82f)
+        }
+        Bottle.PEN -> {
+            // An injection pen standing on its dose knob, cap on top, with a little window.
+            shape(7f, 108f, 12f, 12f, 3f)
+            shape(2f, 40f, 22f, 70f, 6f)
+            shape(7f, 56f, 12f, 24f, 2f, c.label)
+            shape(3f, 0f, 20f, 44f, 6f)
+            ridge(19f, 8f, 19f, 30f)
+            ridge(7f, 96f, 19f, 96f)
+        }
+        Bottle.TUBE -> {
+            // A cream tube standing on its cap: crimped end at the top, tapering down.
+            shape(13f, 84f, 20f, 16f, 3f)
+            shape(17f, 78f, 12f, 8f, 1f)
+            path {
+                moveTo(2f * u, 8f * u)
+                lineTo(44f * u, 8f * u)
+                quadraticTo(44f * u, 50f * u, 34f * u, 78f * u)
+                lineTo(12f * u, 78f * u)
+                quadraticTo(2f * u, 50f * u, 2f * u, 8f * u)
+                close()
+            }
+            shape(8f, 28f, 30f, 26f, 0f, c.label)
+            shape(0f, 0f, 46f, 9f, 2f)
+            ridge(6f, 4.5f, 40f, 4.5f)
+        }
+        Bottle.BOX -> {
+            // A medicine carton, drawn as a simple box with its top and side showing.
+            path {
+                moveTo(0f, 14f * u); lineTo(14f * u, 0f); lineTo(70f * u, 0f); lineTo(56f * u, 14f * u); close()
+            }
+            path(c.label) {
+                moveTo(56f * u, 14f * u); lineTo(70f * u, 0f); lineTo(70f * u, 50f * u); lineTo(56f * u, 64f * u); close()
+            }
+            shape(0f, 14f, 56f, 50f, 0f)
+            shape(0f, 30f, 56f, 18f, 0f, c.label)
         }
     }
 }

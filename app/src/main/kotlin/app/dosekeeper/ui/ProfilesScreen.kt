@@ -58,7 +58,7 @@ fun ProfilesScreen(startAdding: Boolean = false) {
     }
 
     Column(Modifier.verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text("Each person or pet gets their own color, so you can tell at a glance whose dose is due.", style = MaterialTheme.typography.bodySmall)
+        Text("Each person or pet shows their initial or a paw next to their medicines, so you can tell at a glance whose dose is due.", style = MaterialTheme.typography.bodySmall)
         profiles.forEach { p ->
             Card(Modifier.fillMaxWidth().clickable { editing = p }) {
                 Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {

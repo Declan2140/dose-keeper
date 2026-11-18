@@ -10,6 +10,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.AudioAttributes
 import android.media.RingtoneManager
+import android.net.Uri
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
@@ -29,10 +30,18 @@ class Notifier(private val context: Context) {
     fun createChannels() {
         val alarmSound = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
             ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
-        val alarms = NotificationChannel(CHANNEL_ALARMS, context.getString(R.string.channel_alarms), NotificationManager.IMPORTANCE_HIGH).apply {
+        val alarms = alarmChannel(CHANNEL_ALARMS, context.getString(R.string.channel_alarms), alarmSound)
+        val status = NotificationChannel(CHANNEL_STATUS, context.getString(R.string.channel_status), NotificationManager.IMPORTANCE_LOW).apply {
+            description = context.getString(R.string.channel_status_desc)
+        }
+        manager.createNotificationChannels(listOf(alarms, status))
+    }
+
+    private fun alarmChannel(id: String, name: String, sound: Uri?) =
+        NotificationChannel(id, name, NotificationManager.IMPORTANCE_HIGH).apply {
             description = context.getString(R.string.channel_alarms_desc)
             setSound(
-                alarmSound,
+                sound,
                 AudioAttributes.Builder()
                     .setUsage(AudioAttributes.USAGE_ALARM)
                     .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
@@ -43,11 +52,25 @@ class Notifier(private val context: Context) {
             lockscreenVisibility = Notification.VISIBILITY_PUBLIC
             setBypassDnd(true)
         }
-        val status = NotificationChannel(CHANNEL_STATUS, context.getString(R.string.channel_status), NotificationManager.IMPORTANCE_LOW).apply {
-            description = context.getString(R.string.channel_status_desc)
+
+    /**
+     * The channel to ring a medicine's alarm on. Android fixes a channel's sound once it exists,
+     * so each custom sound gets its own channel. If the chosen sound can't be opened any more
+     * (deleted, or on removed storage) the normal alarm channel is used, so it never rings silent.
+     */
+    private fun channelFor(medicine: Medicine): String {
+        val uri = medicine.soundUri?.let { runCatching { Uri.parse(it) }.getOrNull() } ?: return CHANNEL_ALARMS
+        if (!soundPlayable(uri)) return CHANNEL_ALARMS
+        val id = CHANNEL_ALARMS + "_" + Integer.toHexString(uri.toString().hashCode())
+        if (manager.getNotificationChannel(id) == null) {
+            val title = soundTitle(context, uri) ?: "custom sound"
+            manager.createNotificationChannel(alarmChannel(id, "${context.getString(R.string.channel_alarms)} ($title)", uri))
         }
-        manager.createNotificationChannels(listOf(alarms, status))
+        return id
     }
+
+    private fun soundPlayable(uri: Uri): Boolean =
+        runCatching { context.contentResolver.openAssetFileDescriptor(uri, "r")?.use { true } ?: false }.getOrDefault(false)
 
     fun notificationsAllowed(): Boolean = NotificationManagerCompat.from(context).areNotificationsEnabled()
 
@@ -69,7 +92,7 @@ class Notifier(private val context: Context) {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         val who = profile?.name?.let { "$it · " } ?: ""
-        val notification = NotificationCompat.Builder(context, CHANNEL_ALARMS)
+        val notification = NotificationCompat.Builder(context, channelFor(medicine))
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(medicine.displayName)
             .setContentText("${who}due ${formatTime(dueAt)}")
@@ -147,5 +170,9 @@ class Notifier(private val context: Context) {
         const val BACKUP_NOTIFICATION_ID = 999_998
 
         fun notificationId(medicineId: Long): Int = medicineId.toInt()
+
+        /** The sound's display name, like "Morning Glory", or null if it can't be read. */
+        fun soundTitle(context: Context, uri: Uri): String? =
+            runCatching { RingtoneManager.getRingtone(context, uri)?.getTitle(context) }.getOrNull()?.takeIf { it.isNotBlank() }
     }
 }

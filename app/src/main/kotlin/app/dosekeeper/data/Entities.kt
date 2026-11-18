@@ -20,7 +20,7 @@ data class Profile(
 )
 
 enum class MedForm(val label: String) {
-    PILL("Pill"), LIQUID("Liquid"), DROPS("Drops"), INJECTION("Injection"), OTHER("Other")
+    PILL("Pill"), LIQUID("Liquid"), DROPS("Drops"), INHALER("Inhaler"), INJECTION("Injection"), CREAM("Cream"), OTHER("Other")
 }
 
 enum class MedStatus { ACTIVE, PAUSED, ARCHIVED }

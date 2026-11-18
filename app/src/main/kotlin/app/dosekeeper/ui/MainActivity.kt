@@ -161,7 +161,17 @@ private fun AppNav(startOnAdd: Boolean) {
             composable("medicines") { MedicinesScreen(onEdit = { nav.navigate("edit/$it") }) }
             composable("history") { HistoryScreen() }
             composable("settings") {
-                SettingsScreen(onOpenProfiles = { nav.navigate("profiles?add=false") }, onOpenReliability = { nav.navigate("reliability") })
+                SettingsScreen(
+                    onOpenProfiles = { nav.navigate("profiles?add=false") },
+                    onOpenReliability = { nav.navigate("reliability") },
+                    onOpenHistory = {
+                        nav.navigate(Tab.HISTORY.route) {
+                            popUpTo(nav.graph.findStartDestination().id) { saveState = true }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
+                    },
+                )
             }
             composable("edit/{id}", arguments = listOf(navArgument("id") { type = NavType.LongType })) { e ->
                 EditMedicineScreen(

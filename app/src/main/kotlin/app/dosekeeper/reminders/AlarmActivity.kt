@@ -46,6 +46,7 @@ import app.dosekeeper.data.Medicine
 import app.dosekeeper.data.Profile
 import app.dosekeeper.ui.AlarmTheme
 import app.dosekeeper.ui.Bottle
+import app.dosekeeper.ui.CounterItem
 import app.dosekeeper.ui.CounterScene
 import app.dosekeeper.ui.Ink
 import java.time.Instant
@@ -198,7 +199,7 @@ private fun AlarmScreen(
 ) {
     BoxWithConstraints(Modifier.fillMaxSize().background(Ink)) {
         CounterScene(
-            bottles = listOf(bottle),
+            items = listOf(CounterItem(0L, bottle)),
             modifier = Modifier.fillMaxSize(),
             dark = true,
             scale = 2f,
