@@ -32,6 +32,19 @@ fun LocalDate.friendly(): String {
 
 fun Instant.friendlyDateTime(): String = "${localDate().friendly()}, ${localTime()}"
 
+/**
+ * "Taken at 8:02 AM", the exact moment a dose was marked taken. The day is added when it wasn't
+ * today, as for a late-evening dose answered after midnight.
+ */
+fun Instant.takenLabel(): String {
+    val today = LocalDate.now()
+    return when (val day = localDate()) {
+        today -> "Taken at ${localTime()}"
+        today.minusDays(1) -> "Taken yesterday at ${localTime()}"
+        else -> "Taken ${dateFormat.format(day)} at ${localTime()}"
+    }
+}
+
 fun DayOfWeek.short(): String = getDisplayName(TextStyle.SHORT, Locale.getDefault())
 
 private fun ordinal(n: Int): String = n.toString() + when {

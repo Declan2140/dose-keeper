@@ -1,5 +1,9 @@
 package app.dosekeeper.ui
 
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.sp
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -69,8 +73,20 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         app.unlock.connect()
+        // Opening the app means the phone is unlocked: put names back on any alarm that rang locked.
+        lifecycleScope.launch { app.engine.revealRinging() }
     }
 }
+
+@Composable
+private fun NavLabel(text: String) {
+    val base = MaterialTheme.typography.labelSmall
+    val scale = LocalDensity.current.fontScale
+    val size = if (base.fontSize.value * scale > NAV_LABEL_MAX_SP) (NAV_LABEL_MAX_SP / scale).sp else base.fontSize
+    Text(text, style = base.copy(fontSize = size, lineHeight = size * 1.3f), maxLines = 1, softWrap = false)
+}
+
+private const val NAV_LABEL_MAX_SP = 18f
 
 private enum class Tab(val route: String, val label: String, val icon: ImageVector) {
     TODAY("today", "Today", Icons.Filled.Today),
@@ -131,7 +147,10 @@ private fun AppNav(startOnAdd: Boolean) {
                                 }
                             },
                             icon = { Icon(t.icon, null) },
-                            label = { Text(t.label, style = MaterialTheme.typography.labelSmall) },
+                            // Four labels share the bar, so at the largest font sizes they stop growing at 18sp
+                            // rather than breaking mid-word ("Medici-nes"). The icons and
+                            // TalkBack names still say the same thing.
+                            label = { NavLabel(t.label) },
                             colors = NavigationBarItemDefaults.colors(
                                 selectedIconColor = MaterialTheme.colorScheme.onSurface,
                                 selectedTextColor = MaterialTheme.colorScheme.onSurface,

@@ -122,6 +122,7 @@ private fun MedicineRow(med: Medicine, profile: app.dosekeeper.data.Profile?, on
                     }
                 }
             }
+            PillVisualizer(med, Modifier.padding(start = 8.dp), dimmed = dim)
         }
         HorizontalDivider(color = scheme.outlineVariant)
     }

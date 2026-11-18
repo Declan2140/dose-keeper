@@ -1,5 +1,7 @@
 package app.dosekeeper.ui
 
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.ui.semantics.Role
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
@@ -114,6 +116,23 @@ fun SettingsScreen(onOpenProfiles: () -> Unit, onOpenReliability: () -> Unit, on
         Text("Unanswered alarms ring again after this long.", style = MaterialTheme.typography.bodySmall)
         Text("Count a dose as missed after", Modifier.padding(top = 12.dp))
         ChoiceChips(listOf(1, 2, 3, 4, 6), window, { "$it h" }, { app.settings.missedWindowHours = it })
+
+        val hideNames = settingsTick.let { app.settings.hideNamesOnLockScreen }
+        Row(
+            Modifier.fillMaxWidth().padding(top = 12.dp)
+                .toggleable(hideNames, role = Role.Switch, onValueChange = { app.settings.hideNamesOnLockScreen = it }),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f).padding(end = 12.dp)) {
+                Text("Hide medicine names on lock screen")
+                Text(
+                    if (hideNames) "A locked phone shows only \"Medication reminder\". Names appear once it's unlocked."
+                    else "Reminders show the medicine and who it's for, even while the phone is locked.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+            Switch(hideNames, onCheckedChange = null)
+        }
 
         SectionTitle("Backup")
         Text("Your data stays on this phone. Save a backup file somewhere safe, such as Google Drive, so you can restore it on a new phone.", style = MaterialTheme.typography.bodySmall)

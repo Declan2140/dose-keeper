@@ -22,6 +22,13 @@ val Muted = Color(0xFF6B7280)
 val Hairline = Color(0xFFEEF0F2)
 val Fill = Color(0xFFF3F4F6)
 
+/**
+ * Outlines of controls that have no fill, such as the empty check circle. The hairline greys are
+ * too faint to find a button by, so these keep 3:1 against the background.
+ */
+val ControlOutlineLight = Color(0xFF858C96)
+val ControlOutlineDark = Color(0xFF7A828C)
+
 private val light = lightColorScheme(
     primary = Ink,
     onPrimary = Color.White,

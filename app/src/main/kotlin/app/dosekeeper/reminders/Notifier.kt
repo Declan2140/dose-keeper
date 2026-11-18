@@ -4,6 +4,7 @@ import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.KeyguardManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
@@ -16,6 +17,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import app.dosekeeper.R
+import app.dosekeeper.app
 import app.dosekeeper.core.Supply
 import app.dosekeeper.data.Medicine
 import app.dosekeeper.data.Profile
@@ -27,6 +29,13 @@ import java.time.format.FormatStyle
 /** Shows the dose alarm notification, which opens the full-screen alarm when allowed. */
 class Notifier(private val context: Context) {
     private val manager = context.getSystemService(NotificationManager::class.java)
+    private val keyguard = context.getSystemService(KeyguardManager::class.java)
+
+    /**
+     * True while medicine names must stay off the screen: the phone is locked and the user hasn't
+     * turned "Hide medicine names on lock screen" off.
+     */
+    fun namesHidden(): Boolean = context.app.settings.hideNamesOnLockScreen && keyguard.isKeyguardLocked
 
     fun createChannels() {
         val alarmSound = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
@@ -87,32 +96,59 @@ class Notifier(private val context: Context) {
     /**
      * Rings until answered: the notification is insistent (its sound loops), and the alarm also
      * re-fires every snooze interval in case the user silences it without answering.
+     *
+     * With names hidden, a locked phone shows only "Medication reminder" and the time. Android's
+     * own lock-screen redaction depends on a system setting the user may have left open, so the
+     * generic text is also what gets posted while the phone is locked. [quiet] re-posts the full
+     * text after unlocking without ringing a second time.
      */
-    fun showDose(medicine: Medicine, profile: Profile?, dueAt: Instant) {
+    fun showDose(medicine: Medicine, profile: Profile?, dueAt: Instant, quiet: Boolean = false) {
         if (!hasPostPermission()) return
         val id = notificationId(medicine.id)
+        val hide = context.app.settings.hideNamesOnLockScreen
+        val concealed = hide && keyguard.isKeyguardLocked
         val fullScreen = PendingIntent.getActivity(
             context, id, AlarmActivity.intent(context, medicine.id),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         val who = profile?.name?.let { "$it · " } ?: ""
-        val notification = NotificationCompat.Builder(context, channelFor(medicine))
+        val time = formatTime(dueAt)
+        val genericText = "Dose due $time"
+        val builder = NotificationCompat.Builder(context, channelFor(medicine))
             .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle(medicine.displayName)
-            .setContentText("${who}due ${formatTime(dueAt)}")
-            .setStyle(NotificationCompat.BigTextStyle().bigText(listOf("${who}due ${formatTime(dueAt)}", medicine.note).filter { it.isNotBlank() }.joinToString("\n")))
             .setCategory(NotificationCompat.CATEGORY_ALARM)
             .setPriority(NotificationCompat.PRIORITY_MAX)
-            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setColor(ContextCompat.getColor(context, R.color.brand))
             .setOngoing(true)
             .setAutoCancel(false)
+            .setOnlyAlertOnce(quiet)
             .setContentIntent(fullScreen)
             .setFullScreenIntent(fullScreen, true)
             .addAction(0, "Taken", DoseActionReceiver.pending(context, medicine.id, DoseActionReceiver.ACTION_TAKEN))
-            .addAction(0, "Snooze", DoseActionReceiver.pending(context, medicine.id, DoseActionReceiver.ACTION_SNOOZE))
+            .addAction(0, "Snooze ${context.app.settings.snoozeMinutes} min", DoseActionReceiver.pending(context, medicine.id, DoseActionReceiver.ACTION_SNOOZE))
             .addAction(0, "Skip", DoseActionReceiver.pending(context, medicine.id, DoseActionReceiver.ACTION_SKIP))
-            .build()
+        if (concealed) {
+            builder.setContentTitle(GENERIC_TITLE).setContentText("$genericText. Unlock to see which medicine.")
+                .addExtras(android.os.Bundle().apply { putBoolean(EXTRA_CONCEALED, true) })
+        } else {
+            builder.setContentTitle(medicine.displayName)
+                .setContentText("${who}due $time")
+                .setStyle(NotificationCompat.BigTextStyle().bigText(listOf("${who}due $time", medicine.note).filter { it.isNotBlank() }.joinToString("\n")))
+        }
+        if (hide) {
+            builder.setVisibility(NotificationCompat.VISIBILITY_PRIVATE).setPublicVersion(
+                NotificationCompat.Builder(context, channelFor(medicine))
+                    .setSmallIcon(R.drawable.ic_notification)
+                    .setContentTitle(GENERIC_TITLE)
+                    .setContentText(genericText)
+                    .setCategory(NotificationCompat.CATEGORY_ALARM)
+                    .setColor(ContextCompat.getColor(context, R.color.brand))
+                    .build(),
+            )
+        } else {
+            builder.setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+        }
+        val notification = builder.build()
         notification.flags = notification.flags or Notification.FLAG_INSISTENT
         manager.notify(id, notification)
     }
@@ -185,6 +221,13 @@ class Notifier(private val context: Context) {
             .map { it.id.toLong() }
     fun cancelTest() = manager.cancel(TEST_NOTIFICATION_ID)
 
+    /** Ringing alarms that were posted without the medicine's name, while the phone was locked. */
+    fun concealedDoseIds(): List<Long> =
+        runCatching { manager.activeNotifications.toList() }.getOrDefault(emptyList())
+            .filter { it.notification.extras.getBoolean(EXTRA_CONCEALED, false) }
+            .map { it.id.toLong() }
+            .filter { it in 1 until BACKUP_NOTIFICATION_ID }
+
     private fun hasPostPermission(): Boolean =
         Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
             ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
@@ -193,6 +236,9 @@ class Notifier(private val context: Context) {
         DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT).format(instant.atZone(ZoneId.systemDefault()))
 
     companion object {
+        /** All a locked phone says about a dose. Never a medicine or a person's name. */
+        const val GENERIC_TITLE = "Medication reminder"
+        private const val EXTRA_CONCEALED = "app.dosekeeper.CONCEALED"
         const val CHANNEL_ALARMS = "dose_alarms"
         const val CHANNEL_STATUS = "status"
         const val CHANNEL_REFILLS = "refills"

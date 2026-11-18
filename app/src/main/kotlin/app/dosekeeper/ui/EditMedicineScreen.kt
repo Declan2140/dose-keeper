@@ -11,7 +11,15 @@ import android.text.format.DateFormat
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -66,6 +74,8 @@ import app.dosekeeper.core.Supply
 import app.dosekeeper.data.MedForm
 import app.dosekeeper.data.MedStatus
 import app.dosekeeper.data.Medicine
+import app.dosekeeper.data.PillColor
+import app.dosekeeper.data.PillShape
 import app.dosekeeper.reminders.Notifier
 import kotlinx.coroutines.launch
 import java.time.DayOfWeek
@@ -103,16 +113,19 @@ private class Form {
     var tracking by mutableStateOf(false)
     var supplyLeft by mutableStateOf("")
     var perDose by mutableStateOf("1")
+    var shape by mutableStateOf(PillShape.defaultFor(MedForm.PILL))
+    var color by mutableStateOf<PillColor?>(null)
 
     /** Everything the user can change, to tell whether leaving would lose edits. */
     fun signature(): String = listOf(
         name, strength, form, note, kind, times.toList(), days, weekdays.toSet(), everyN, dayOfMonth, startDate, endDate,
-        intervalHours, firstDose, quiet, quietStart, quietEnd, gapHours, soundUri, tracking, supplyLeft, perDose,
+        intervalHours, firstDose, quiet, quietStart, quietEnd, gapHours, soundUri, tracking, supplyLeft, perDose, shape, color,
     ).joinToString("|")
 
     fun load(med: Medicine) {
         name = med.name; strength = med.strength; form = med.medForm; note = med.note; profileId = med.profileId; soundUri = med.soundUri
         tracking = med.tracksSupply
+        shape = med.shape; color = med.color
         supplyLeft = med.supplyLeft?.let(Notifier::formatAmount) ?: ""
         perDose = Notifier.formatAmount(med.perDose)
         when (val s = med.parsedSchedule) {
@@ -162,6 +175,48 @@ private class Form {
             Kind.AS_NEEDED -> Schedule.AsNeeded(if (gapHours.isBlank()) null else parseHours(gapHours) ?: error("Enter the minimum hours between doses, or leave it empty."))
         }
     }
+}
+
+/**
+ * Picks the small picture shown next to the medicine: its shape and, if wanted, a color. The
+ * picture is a second clue beside the name, for telling apart medicines that look or sound alike.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun LooksLikeEditor(form: Form) {
+    val scheme = MaterialTheme.colorScheme
+    Text("A small picture next to the name, to help tell similar medicines apart.", style = MaterialTheme.typography.bodySmall)
+    Spacer(Modifier.height(8.dp))
+    Segmented(
+        options = listOf<PillShape?>(null) + PillShape.entries,
+        selected = form.shape,
+        label = { it?.label ?: "No picture" },
+        onSelect = { form.shape = it },
+    )
+    val shape = form.shape ?: return
+    Spacer(Modifier.height(12.dp))
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        (listOf<PillColor?>(null) + PillColor.entries).forEach { option ->
+            val selected = option == form.color
+            // Each choice is a 48dp target. The chosen one gets a ring as well as its color, and
+            // its name is written underneath, so the choice never depends on seeing the color.
+            Box(
+                Modifier.size(48.dp)
+                    .then(if (selected) Modifier.border(2.dp, scheme.onSurface, CircleShape) else Modifier)
+                    .selectable(selected = selected, role = Role.RadioButton, onClick = { form.color = option })
+                    .semantics { contentDescription = option?.label ?: "No color" },
+                contentAlignment = Alignment.Center,
+            ) {
+                PillVisualizer(shape, option, size = 34.dp, description = null)
+            }
+        }
+    }
+    Text(
+        listOfNotNull(form.color?.label ?: "No color", shape.label.lowercase()).joinToString(" "),
+        style = MaterialTheme.typography.bodySmall,
+        color = scheme.onSurfaceVariant,
+        modifier = Modifier.padding(top = 4.dp),
+    )
 }
 
 /** "30", "12.5" or "12,5". Null for anything that isn't a number zero or above. */
@@ -235,7 +290,14 @@ fun EditMedicineScreen(medicineId: Long, onDone: () -> Unit, onAddProfile: () ->
             Field(form.strength, { form.strength = it }, label = { Text("Strength or dose (optional)") }, placeholder = { Text("e.g. 250 mg, 2 tablets, 5 ml") }, modifier = Modifier.fillMaxWidth(), enabled = !archived)
 
             SectionTitle("Form")
-            ChoiceChips(MedForm.entries, form.form, { it.label }, { form.form = it })
+            ChoiceChips(MedForm.entries, form.form, { it.label }, {
+                // A new form brings its usual picture: a tablet for pills, a pen for injections.
+                if (it != form.form) form.shape = PillShape.defaultFor(it)
+                form.form = it
+            })
+
+            SectionTitle("Looks like (optional)")
+            LooksLikeEditor(form)
 
             SectionTitle("For")
             Segmented(profiles.map { it.id }, form.profileId, { id -> profiles.firstOrNull { it.id == id }?.name ?: "" }, { form.profileId = it })
@@ -299,6 +361,7 @@ fun EditMedicineScreen(medicineId: Long, onDone: () -> Unit, onAddProfile: () ->
                     val updated = base.copy(
                         name = name, strength = form.strength.trim(), form = form.form.name, note = form.note.trim(),
                         profileId = profileId!!, schedule = encoded, soundUri = form.soundUri,
+                        pillShape = form.shape?.name, pillColor = form.color?.takeIf { form.shape != null }?.name,
                         supplyLeft = if (form.tracking) parseAmount(form.supplyLeft) else null,
                         perDose = if (form.tracking) parseAmount(form.perDose)!! else base.perDose,
                     )

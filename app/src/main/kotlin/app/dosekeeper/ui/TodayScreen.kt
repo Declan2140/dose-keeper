@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -74,6 +75,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.semantics
 import app.dosekeeper.app
 import app.dosekeeper.core.DoseStatus
 import app.dosekeeper.core.Supply
@@ -432,23 +436,35 @@ private fun LateCard(dose: TodayDose, onTaken: () -> Unit, onSnooze: () -> Unit,
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        // Read out as one sentence: "Amoxicillin 250 mg, late, due 8:00 AM, blue capsule".
+        Row(Modifier.semantics(mergeDescendants = true) {}, verticalAlignment = Alignment.CenterVertically) {
             ProfileBadge(dose.profile)
             Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
                 Text(dose.medicine.displayName, style = MaterialTheme.typography.titleMedium)
                 Text(
-                    listOfNotNull(dose.profile?.name, "due ${dose.due.friendlyDateTime().removePrefix("Today, ")}").joinToString(", ") +
+                    listOfNotNull(dose.profile?.name, "late, due ${dose.due.friendlyDateTime().removePrefix("Today, ")}").joinToString(", ") +
                         (dose.snoozedUntil?.let { ", rings again at ${it.localTime()}" } ?: ""),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+            PillVisualizer(dose.medicine, Modifier.padding(start = 8.dp))
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = onTaken, modifier = Modifier.weight(1.5f).height(48.dp)) { Text("Taken") }
-            OutlinedButton(onClick = onSnooze, modifier = Modifier.weight(1f).height(48.dp), contentPadding = PaddingValues(0.dp)) { Text("Snooze") }
-            OutlinedButton(onClick = onSkip, modifier = Modifier.weight(1f).height(48.dp), contentPadding = PaddingValues(0.dp)) { Text("Skip") }
+        // With the phone's font size turned well up, three buttons side by side would cut their
+        // labels off, so they stack instead. They grow with the text rather than clipping it.
+        if (LocalDensity.current.fontScale >= 1.5f) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = onTaken, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Taken") }
+                OutlinedButton(onClick = onSnooze, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Snooze") }
+                OutlinedButton(onClick = onSkip, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Skip") }
+            }
+        } else {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = onTaken, modifier = Modifier.weight(1.5f).heightIn(min = 48.dp)) { Text("Taken") }
+                OutlinedButton(onClick = onSnooze, modifier = Modifier.weight(1f).heightIn(min = 48.dp), contentPadding = PaddingValues(0.dp)) { Text("Snooze") }
+                OutlinedButton(onClick = onSkip, modifier = Modifier.weight(1f).heightIn(min = 48.dp), contentPadding = PaddingValues(0.dp)) { Text("Skip") }
+            }
         }
     }
 }
@@ -523,7 +539,8 @@ private fun SwipeBackground(state: SwipeToDismissBoxState) {
 private fun DoseRowContent(dose: TodayDose, onCircle: () -> Unit, onClick: () -> Unit) {
     val scheme = MaterialTheme.colorScheme
     val done = dose.status != null
-    val nameColor by animateColorAsState(if (done) scheme.onSurfaceVariant.copy(alpha = 0.7f) else scheme.onSurface, tween(300), label = "name")
+    // Done rows step back to the secondary text color, which still passes 4.5:1 on the background.
+    val nameColor by animateColorAsState(if (done) scheme.onSurfaceVariant else scheme.onSurface, tween(300), label = "name")
     Column(Modifier.background(scheme.background).padding(horizontal = 24.dp)) {
         Row(
             Modifier.fillMaxWidth().clickable(enabled = dose.actionable || dose.undoable, onClick = onClick).padding(vertical = 12.dp),
@@ -539,15 +556,21 @@ private fun DoseRowContent(dose: TodayDose, onCircle: () -> Unit, onClick: () ->
                     textDecoration = if (dose.status == DoseStatus.TAKEN) TextDecoration.LineThrough else null,
                 )
                 val time = dose.due.localTime()
+                // The exact moment it was marked taken gets its own line, so "did I take it?" is
+                // answered at a glance. The time is the real tap time and can't be edited.
+                if (dose.status == DoseStatus.TAKEN && dose.at != null) {
+                    Text(dose.at.takenLabel(), style = MaterialTheme.typography.labelLarge, color = scheme.onSurface)
+                }
                 val sub = when (dose.status) {
-                    DoseStatus.TAKEN -> "$time, taken at ${dose.at?.localTime() ?: ""}"
-                    DoseStatus.SKIPPED -> "$time, skipped"
-                    DoseStatus.MISSED -> "$time, missed"
+                    DoseStatus.TAKEN -> "Due $time"
+                    DoseStatus.SKIPPED -> "Due $time, skipped"
+                    DoseStatus.MISSED -> "Due $time, missed"
                     null -> listOfNotNull(time, dose.profile?.name, dose.medicine.medForm.label.lowercase()).joinToString(", ") +
                         (dose.snoozedUntil?.let { ", rings again at ${it.localTime()}" } ?: "")
                 }
                 Text(sub, style = MaterialTheme.typography.bodySmall, color = if (dose.status == DoseStatus.MISSED) Overdue else scheme.onSurfaceVariant)
             }
+            PillVisualizer(dose.medicine, Modifier.padding(horizontal = 8.dp), dimmed = done)
             when {
                 dose.status == DoseStatus.TAKEN -> CheckCircle(true, enabled = dose.undoable, label = "Mark as not taken", onClick = onCircle)
                 dose.actionable -> CheckCircle(false, enabled = true, label = "Mark as taken", onClick = onCircle)
@@ -572,22 +595,25 @@ private fun CheckCircle(checked: Boolean, enabled: Boolean, label: String, onCli
         spring(dampingRatio = 0.4f, stiffness = Spring.StiffnessLow),
         label = "tick",
     )
+    val ring = if (scheme.background == Ink) ControlOutlineDark else ControlOutlineLight
+    // The touch target is 48dp; the circle drawn inside it stays 44dp.
     Box(
-        Modifier.size(44.dp)
-            .border(1.5.dp, scheme.outline.copy(alpha = (1f - fill).coerceIn(0f, 1f)), CircleShape)
+        Modifier.size(48.dp)
             .clickable(
                 enabled = enabled,
                 onClickLabel = label,
+                role = Role.Button,
                 interactionSource = remember { MutableInteractionSource() },
-                indication = ripple(bounded = false, radius = 24.dp),
+                indication = ripple(bounded = false, radius = 26.dp),
                 onClick = onClick,
             ),
         contentAlignment = Alignment.Center,
     ) {
+        Box(Modifier.size(44.dp).border(1.5.dp, ring.copy(alpha = (1f - fill).coerceIn(0f, 1f)), CircleShape))
         Box(Modifier.size(44.dp).graphicsLayer { scaleX = fill; scaleY = fill }.background(scheme.secondary, CircleShape))
         Icon(
             Icons.Filled.Check,
-            contentDescription = if (checked) "Taken" else null,
+            contentDescription = if (checked) "Taken" else "Not taken yet",
             tint = scheme.onSecondary,
             modifier = Modifier.size(22.dp).graphicsLayer {
                 alpha = tick.coerceIn(0f, 1f)
@@ -605,7 +631,7 @@ private fun AsNeededRowView(row: AsNeededRow, onLog: () -> Unit) {
         Row(Modifier.fillMaxWidth().padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             ProfileBadge(row.profile)
             Spacer(Modifier.width(14.dp))
-            Column(Modifier.weight(1f)) {
+            Column(Modifier.weight(1f).semantics(mergeDescendants = true) {}) {
                 Text(row.medicine.displayName, style = MaterialTheme.typography.titleMedium)
                 val sub = when {
                     row.notBefore != null -> "Not before ${row.notBefore.localTime()}"
@@ -614,7 +640,8 @@ private fun AsNeededRowView(row: AsNeededRow, onLog: () -> Unit) {
                 }
                 Text(sub, style = MaterialTheme.typography.bodySmall, color = if (row.notBefore != null) Overdue else scheme.onSurfaceVariant)
             }
-            OutlinedButton(onClick = onLog) { Text("Took it") }
+            PillVisualizer(row.medicine, Modifier.padding(horizontal = 8.dp))
+            OutlinedButton(onClick = onLog, modifier = Modifier.heightIn(min = 48.dp)) { Text("Took it") }
         }
         HorizontalDivider(color = scheme.outlineVariant)
     }
